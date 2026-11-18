@@ -2,102 +2,80 @@ import { SupportedLanguage } from '../domain/types.js';
 
 export const messages = {
   fr: {
-    welcome_title: "🤝 Bienvenue sur Bayam-Sellam Escrow (Cameroun)",
-    welcome_body: "Achetez et vendez en toute sécurité sur TikTok, WhatsApp & Instagram avec MTN MoMo et Orange Money.\n\nFini les arnaques et les courses de moto payées pour rien !",
-    btn_seller_new_order: "➕ Créer un lien Escrow (Vendeur)",
-    btn_my_orders: "📦 Mes Transactions",
-    btn_rider_mode: "🏍️ Mode Livreur Moto",
+    welcome_title: "🤝 BayamSafe - Séquestre & Micro-Logistique (Cameroun 🇨🇲)",
+    welcome_body: "La plateforme unifiée pour le commerce social et la livraison :\n\n" +
+      "1. 🔒 *Séquestre MoMo / Orange Money* : Zéro arnaque vendeur/acheteur.\n" +
+      "2. 🏍️ *Livraison Moto Intra-Ville* : Douala, Yaoundé avec suivi en direct.\n" +
+      "3. 🚌 *Expédition Inter-Villes (Agences)* : Dépôt sécurisé chez Moghamo, Guarantee, Buca avec photo du bordereau.",
+    
+    btn_new_intra_order: "🏍️ Livraison Intra-Ville (Moto Direct)",
+    btn_new_agency_order: "🚌 Expédition Inter-Villes (Agences Bus)",
+    btn_my_orders: "📦 Mes Expéditions",
+    btn_rider_mode: "🛵 Espace Livreur Moto",
     btn_change_lang: "🌐 English",
     
-    // Order creation
-    create_step_title: "📝 Quel est le nom de l'article ?",
-    create_step_price: "💰 Quel est le prix de l'article (en FCFA) ?",
-    create_step_delivery: "🛵 Frais de livraison moto (en FCFA) ? (Mettez 0 si gratuit)",
-    create_step_phone: "📱 Numéro WhatsApp / Téléphone de l'acheteur (ex: 670000000) :",
-    order_created_title: "✅ Lien Escrow Sécurisé Généré !",
-    order_created_summary: (code: string, item: string, total: number, fee: number) =>
-      `📦 Article: *${item}*\n` +
-      `💳 Montant Total Sécurisé: *${total.toLocaleString('fr-FR')} FCFA*\n` +
-      `🛡️ Commission de confiance (2.5%): *${fee.toLocaleString('fr-FR')} FCFA*\n` +
-      `🔖 Référence: \`${code}\`\n\n` +
-      `👉 Partagez ce lien à votre acheteur sur WhatsApp / TikTok / Instagram :`,
+    rider_on_duty: "🟢 Vous êtes maintenant EN SERVICE (/off_duty pour arrêter). Vous recevrez les courses à proximité.",
+    rider_off_duty: "🔴 Vous êtes HORS SERVICE. Aucune course ne vous sera envoyée.",
 
-    // Buyer notifications
+    agency_select_prompt: "🚌 Choisissez votre agence de voyage partenaire pour le transport :",
+    agency_waybill_prompt: "📸 Livreur: Prenez une photo nette du reçu/bordereau d'expédition de l'agence :",
+    agency_waybill_success: (agency: string, num: string) => `✅ Colis enregistré chez *${agency}* ! N° Bordereau: \`${num}\``,
+
+    order_created_summary: (code: string, type: string, item: string, total: number, fee: number) =>
+      `📦 Expédition: *${item}* (${type})\n` +
+      `💳 Montant Total: *${total.toLocaleString('fr-FR')} FCFA*\n` +
+      `🛡️ Commission Séquestre: *${fee.toLocaleString('fr-FR')} FCFA*\n` +
+      `🔖 Code Suivi: \`${code}\`\n\n` +
+      `👉 Partagez ce lien avec le client sur WhatsApp / TikTok :`,
+
     funds_locked_buyer: (item: string, code: string, releaseCode: string) =>
       `🔒 *Paiement Sécurisé en Escrow !*\n\n` +
-      `Votre paiement pour *${item}* est bloqué en sécurité.\n` +
-      `Le vendeur ne touchera PAS l'argent tant que vous n'aurez pas reçu et inspecté le colis.\n\n` +
+      `Votre paiement pour *${item}* est bloqué en toute sécurité.\n\n` +
       `🔑 *Votre Code Secret de Libération :* \`${releaseCode}\`\n\n` +
-      `⚠️ *ATTENTION* : Ne donnez JAMAIS ce code au livreur tant que vous n'avez pas ouvert et vérifié le colis devant lui !`,
+      `⚠️ Ne donnez ce code au livreur qu'après avoir inspecté le colis !`,
 
-    funds_locked_seller: (item: string, code: string) =>
-      `💰 *Fonds Sécurisés ! Vous pouvez expédier le colis.*\n\n` +
-      `L'acheteur a payé pour *${item}* (\`${code}\`).\n` +
-      `L'argent est bloqué en sécurité dans le compte séquestre.\n` +
-      `Vous pouvez remettre le colis au livreur moto en toute sérénité.`,
-
-    // Rider mode
-    rider_welcome: "🏍️ *Mode Livreur Moto*\n\nEntrez le code de commande ou scannez pour vérifier et encaisser votre course :",
-    rider_enter_release_code: "🔑 Entrez le code à 4 chiffres donné par le client après inspection :",
-    rider_success_payout: (amount: number, deliveryFee: number) =>
-      `🎉 *Livraison Validée !*\n\n` +
-      `Les fonds ont été débloqués instantanément :\n` +
-      `- Frais de livraison versés au livreur: *${deliveryFee.toLocaleString('fr-FR')} FCFA*\n` +
-      `- Montant versé au vendeur: *${amount.toLocaleString('fr-FR')} FCFA* via Mobile Money.`,
-
-    // Dispute
-    dispute_initiated: "⚠️ *Litige Déclaré !*\n\nLe colis a été refusé. Le livreur ramène le colis au vendeur. Vos fonds d'achat restent protégés.",
-    error_invalid_code: "❌ Code de libération erroné. Veuillez réessayer.",
-    error_too_many_attempts: "⛔ Nombre maximum de tentatives dépassé. Transaction bloquée pour vérification manuelle."
+    delivery_settled: (merchant: number, rider: number) =>
+      `🎉 *Course Terminée & Fonds Débloqués !*\n\n` +
+      `- Vendeur crédité: *${merchant.toLocaleString('fr-FR')} FCFA*\n` +
+      `- Livreur crédité: *${rider.toLocaleString('fr-FR')} FCFA*`
   },
   en: {
-    welcome_title: "🤝 Welcome to Bayam-Sellam Escrow (Cameroon)",
-    welcome_body: "Zero-fraud social commerce on TikTok, WhatsApp & Instagram using MTN MoMo & Orange Money.\n\nNo more upfront payment scams, no more wasted bike delivery fees!",
-    btn_seller_new_order: "➕ Create Escrow Link (Seller)",
-    btn_my_orders: "📦 My Transactions",
-    btn_rider_mode: "🏍️ Moto Rider Mode",
+    welcome_title: "🤝 BayamSafe - Escrow & Micro-Logistics (Cameroon 🇨🇲)",
+    welcome_body: "The unified social commerce escrow and dispatch platform:\n\n" +
+      "1. 🔒 *MoMo & Orange Money Escrow*: Zero-scam buyer/seller guarantee.\n" +
+      "2. 🏍️ *Intra-City Moto Courier*: Douala, Yaoundé on-demand with live tracking.\n" +
+      "3. 🚌 *Inter-City Bus Agency Concierge*: Drop-off at Moghamo, Guarantee, Buca with waybill receipt photo.",
+
+    btn_new_intra_order: "🏍️ Intra-City Direct (Moto)",
+    btn_new_agency_order: "🚌 Inter-City Agency (Bus Line)",
+    btn_my_orders: "📦 My Orders",
+    btn_rider_mode: "🛵 Rider Portal",
     btn_change_lang: "🌐 Français",
 
-    // Order creation
-    create_step_title: "📝 What is the item name?",
-    create_step_price: "💰 What is the item price (in FCFA)?",
-    create_step_delivery: "🛵 Bike delivery fee (in FCFA)? (Enter 0 if free delivery)",
-    create_step_phone: "📱 Buyer's WhatsApp / Phone number (e.g. 670000000):",
-    order_created_title: "✅ Secure Escrow Link Created!",
-    order_created_summary: (code: string, item: string, total: number, fee: number) =>
-      `📦 Item: *${item}*\n` +
-      `💳 Total Locked Amount: *${total.toLocaleString('en-US')} FCFA*\n` +
-      `🛡️ Trust Fee (2.5%): *${fee.toLocaleString('en-US')} FCFA*\n` +
-      `🔖 Reference: \`${code}\`\n\n` +
-      `👉 Share this link with your buyer on WhatsApp / TikTok / Instagram:`,
+    rider_on_duty: "🟢 You are now ON DUTY (/off_duty to pause). You will receive nearby delivery gigs.",
+    rider_off_duty: "🔴 You are OFF DUTY. You will not receive delivery gigs.",
 
-    // Buyer notifications
+    agency_select_prompt: "🚌 Select your partner travel agency for inter-city transit:",
+    agency_waybill_prompt: "📸 Rider: Take a clear photo of the agency waybill receipt:",
+    agency_waybill_success: (agency: string, num: string) => `✅ Parcel dropped at *${agency}*! Waybill: \`${num}\``,
+
+    order_created_summary: (code: string, type: string, item: string, total: number, fee: number) =>
+      `📦 Shipment: *${item}* (${type})\n` +
+      `💳 Total Amount: *${total.toLocaleString('en-US')} FCFA*\n` +
+      `🛡️ Escrow Fee: *${fee.toLocaleString('en-US')} FCFA*\n` +
+      `🔖 Tracking Code: \`${code}\`\n\n` +
+      `👉 Share this link with your buyer on WhatsApp / TikTok:`,
+
     funds_locked_buyer: (item: string, code: string, releaseCode: string) =>
       `🔒 *Payment Locked in Escrow!*\n\n` +
-      `Your payment for *${item}* is safely locked.\n` +
-      `The seller will NOT receive the funds until you inspect and accept the package.\n\n` +
+      `Your payment for *${item}* is safely secured in escrow.\n\n` +
       `🔑 *Your Secret 4-Digit Release Code:* \`${releaseCode}\`\n\n` +
-      `⚠️ *IMPORTANT*: NEVER disclose this code to the delivery rider until you have opened and inspected the item!`,
+      `⚠️ Never share this code with the rider until you inspect the parcel!`,
 
-    funds_locked_seller: (item: string, code: string) =>
-      `💰 *Funds Secured! Safe to Dispatch.*\n\n` +
-      `The buyer has paid for *${item}* (\`${code}\`).\n` +
-      `Funds are held in custodial escrow.\n` +
-      `You can now hand the package over to your moto rider with zero risk.`,
-
-    // Rider mode
-    rider_welcome: "🏍️ *Moto Rider Mode*\n\nEnter the order code to confirm delivery and collect your fee:",
-    rider_enter_release_code: "🔑 Enter the 4-digit code provided by the customer after package inspection:",
-    rider_success_payout: (amount: number, deliveryFee: number) =>
-      `🎉 *Delivery Confirmed!*\n\n` +
-      `Funds have been instantly disbursed:\n` +
-      `- Delivery fee paid to Rider: *${deliveryFee.toLocaleString('en-US')} FCFA*\n` +
-      `- Item amount paid to Seller: *${amount.toLocaleString('en-US')} FCFA* via Mobile Money.`,
-
-    // Dispute
-    dispute_initiated: "⚠️ *Dispute Opened!*\n\nThe package was rejected. The rider is returning it to the seller. Your escrow deposit remains protected.",
-    error_invalid_code: "❌ Invalid release code. Please double-check with the customer.",
-    error_too_many_attempts: "⛔ Maximum attempts exceeded. Transaction locked for manual arbitration."
+    delivery_settled: (merchant: number, rider: number) =>
+      `🎉 *Delivery Completed & Funds Settled!*\n\n` +
+      `- Merchant credited: *${merchant.toLocaleString('en-US')} FCFA*\n` +
+      `- Rider credited: *${rider.toLocaleString('en-US')} FCFA*`
   }
 };
 

@@ -3,11 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bayam-Sellam Escrow - Paiement Sécurisé</title>
+  <title>BayamSafe - Séquestre & Livraison GPS</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #mapPicker { height: 180px; border-radius: 1rem; z-index: 1; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 flex justify-center p-3 sm:p-6">
@@ -18,390 +21,143 @@
       <div>
         <div class="flex items-center gap-2">
           <i class="fa-solid fa-shield-halved text-amber-300 text-xl"></i>
-          <h1 class="font-extrabold text-lg tracking-tight">Bayam-Sellam Escrow</h1>
+          <h1 class="font-extrabold text-lg tracking-tight">BayamSafe</h1>
         </div>
-        <p class="text-xs text-emerald-100 mt-0.5" id="lbl-tagline">Protection acheteur & vendeur Cameroun 🇨🇲</p>
+        <p class="text-xs text-emerald-100 mt-0.5">Séquestre MoMo & Livraison GPS 🇨🇲</p>
       </div>
-      <button id="langToggleBtn" class="bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold transition flex items-center gap-1 backdrop-blur-sm">
+      <button id="langToggleBtn" class="bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold transition flex items-center gap-1">
         <i class="fa-solid fa-globe"></i> <span id="currentLangLabel">EN</span>
       </button>
     </div>
 
-    <!-- Main Content Area -->
-    <div class="p-5 flex-1 flex flex-col justify-between">
+    <!-- Main Content -->
+    <div class="p-5 flex-1 flex flex-col justify-between space-y-4">
       
-      <!-- Order Info Box -->
-      <div id="orderCard" class="space-y-4">
-        <div class="flex justify-between items-start border-b border-slate-100 pb-3">
-          <div>
-            <span class="text-[11px] font-bold tracking-wider text-slate-400 uppercase" id="lbl-ref">RÉFÉRENCE</span>
-            <div class="font-mono font-bold text-slate-700 text-sm" id="orderCodeDisplay">Chargement...</div>
-          </div>
-          <span id="orderStatusBadge" class="bg-amber-100 text-amber-800 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-            <i class="fa-solid fa-clock"></i> <span id="orderStatusText">En attente</span>
-          </span>
+      <!-- Order Summary Card -->
+      <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-sm space-y-2">
+        <div class="flex justify-between items-center">
+          <span class="text-xs font-mono font-bold text-slate-500" id="orderCodeDisplay">BS-DLA-83921</span>
+          <span class="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded-full">Sécurisé</span>
         </div>
-
-        <div>
-          <h2 class="text-lg font-bold text-slate-900 leading-snug" id="itemTitleDisplay">Chargement du colis...</h2>
-          <p class="text-xs text-slate-500 mt-1 flex items-center gap-1">
-            <i class="fa-solid fa-store text-emerald-600"></i>
-            <span id="sellerNameDisplay">Vendeur vérifié</span>
-          </p>
+        <h2 class="text-base font-bold text-slate-900" id="itemTitleDisplay">Colis en cours de livraison</h2>
+        <div class="flex justify-between text-xs text-slate-600 pt-1 border-t border-slate-200">
+          <span>Montant Total :</span>
+          <span class="font-extrabold text-emerald-700 text-sm" id="totalAmountDisplay">15,000 FCFA</span>
         </div>
-
-        <!-- Breakdown Table -->
-        <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 text-sm space-y-2">
-          <div class="flex justify-between text-slate-600">
-            <span id="lbl-item-price">Prix article :</span>
-            <span class="font-semibold" id="itemPriceDisplay">0 FCFA</span>
-          </div>
-          <div class="flex justify-between text-slate-600">
-            <span class="flex items-center gap-1">
-              <i class="fa-solid fa-motorcycle text-slate-400"></i>
-              <span id="lbl-delivery-fee">Course Livreur Moto :</span>
-            </span>
-            <span class="font-semibold" id="deliveryFeeDisplay">0 FCFA</span>
-          </div>
-          <div class="flex justify-between text-emerald-700 text-xs font-medium pt-1 border-t border-slate-200">
-            <span class="flex items-center gap-1">
-              <i class="fa-solid fa-shield"></i>
-              <span id="lbl-protection">Séquestre garanti 100% :</span>
-            </span>
-            <span id="lbl-free">Inclus</span>
-          </div>
-          <div class="flex justify-between items-center pt-2 border-t border-slate-200 text-base font-extrabold text-slate-900">
-            <span id="lbl-total">Total à bloquer :</span>
-            <span class="text-emerald-700 text-lg" id="totalAmountDisplay">0 FCFA</span>
-          </div>
-        </div>
-
-        <!-- State 1: Payment Selection -->
-        <div id="paymentSelectionSection" class="space-y-3 pt-2">
-          <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider" id="lbl-choose-payment">
-            Mode de Paiement Sécurisé
-          </label>
-          
-          <div class="grid grid-cols-2 gap-3">
-            <button type="button" onclick="selectOperator('MTN')" id="btnOperatorMTN" class="border-2 border-yellow-400 bg-yellow-50/50 hover:bg-yellow-100 rounded-2xl p-3 flex flex-col items-center gap-1 transition">
-              <span class="font-extrabold text-sm text-yellow-800">MTN MoMo</span>
-              <span class="text-[10px] text-yellow-700 font-medium">*126# USSD Push</span>
-            </button>
-
-            <button type="button" onclick="selectOperator('ORANGE')" id="btnOperatorOrange" class="border-2 border-slate-200 hover:border-orange-500 hover:bg-orange-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition">
-              <span class="font-extrabold text-sm text-orange-600">Orange Money</span>
-              <span class="text-[10px] text-orange-700 font-medium">#150# USSD Push</span>
-            </button>
-          </div>
-
-          <div class="mt-3">
-            <label class="block text-xs font-medium text-slate-500 mb-1" id="lbl-phone">Numéro Mobile Money :</label>
-            <div class="relative">
-              <span class="absolute left-3 top-3 text-slate-400 font-semibold text-sm">+237</span>
-              <input type="tel" id="buyerPhoneInput" placeholder="671 23 45 67" value="671234567" class="w-full pl-16 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500">
-            </div>
-          </div>
-
-          <!-- Pay Button -->
-          <button id="btnPay" onclick="triggerPayment()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition active:scale-[0.98] mt-2">
-            <i class="fa-solid fa-lock"></i>
-            <span id="btnPayText">Bloquer les fonds en Escrow</span>
-          </button>
-        </div>
-
-        <!-- State 2: Escrow Locked (4-digit Release Code Card) -->
-        <div id="escrowLockedSection" class="hidden space-y-4 pt-2">
-          <div class="bg-gradient-to-br from-emerald-50 to-teal-100 border-2 border-emerald-500 rounded-2xl p-4 text-center space-y-3">
-            <div class="w-12 h-12 bg-emerald-500 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
-              <i class="fa-solid fa-lock text-xl"></i>
-            </div>
-            <div>
-              <h3 class="font-extrabold text-slate-900" id="lbl-locked-title">Fonds Bloqués en Sécurité !</h3>
-              <p class="text-xs text-slate-600 mt-1" id="lbl-locked-desc">
-                Le vendeur et le livreur ne toucheront l'argent qu'après votre inspection.
-              </p>
-            </div>
-            
-            <div class="bg-white rounded-xl py-3 px-4 shadow-sm border border-emerald-200">
-              <div class="text-[11px] font-bold text-slate-400 uppercase tracking-widest" id="lbl-secret-code">CODE DE LIBÉRATION (4 CHIFFRES)</div>
-              <div class="font-mono text-3xl font-black text-emerald-700 tracking-widest my-1" id="releaseCodeDisplay">----</div>
-              <div class="text-[10px] text-red-500 font-semibold" id="lbl-code-warn">⚠️ Ne donnez ce code au livreur qu'après avoir inspecté le colis !</div>
-            </div>
-          </div>
-
-          <!-- Rider Mode Verification Simulator inside Checkout -->
-          <div class="border-t border-slate-200 pt-3">
-            <div class="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
-              <i class="fa-solid fa-motorcycle text-emerald-600"></i>
-              <span id="lbl-rider-action">Test Livraison Moto (Remise du colis) :</span>
-            </div>
-            <div class="flex gap-2">
-              <input type="text" id="riderCodeInput" maxlength="4" placeholder="Code 4 chiffres" class="w-1/2 px-3 py-2 text-center font-mono font-bold text-base bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500">
-              <button onclick="verifyRiderCode()" class="flex-1 bg-slate-900 hover:bg-black text-white text-xs font-bold py-2 px-3 rounded-xl transition flex items-center justify-center gap-1">
-                <i class="fa-solid fa-check"></i> <span id="btnVerifyText">Valider & Payer Livreur</span>
-              </button>
-            </div>
-            <button onclick="disputeOrder()" class="w-full text-red-600 hover:text-red-700 text-xs font-semibold py-2 mt-2 flex items-center justify-center gap-1 transition">
-              <i class="fa-solid fa-ban"></i> <span id="btnDisputeText">Refuser le colis (Litige & Retour)</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- State 3: Completed / Success -->
-        <div id="completedSection" class="hidden text-center py-6 space-y-3">
-          <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold">
-            <i class="fa-solid fa-circle-check"></i>
-          </div>
-          <h3 class="text-xl font-black text-slate-900" id="lbl-success-title">Transaction Terminée avec Succès !</h3>
-          <p class="text-xs text-slate-600" id="lbl-success-desc">
-            Le livreur a reçu sa course et le vendeur a reçu son paiement instantanément via Mobile Money.
-          </p>
-        </div>
-
       </div>
 
-      <!-- Trust Footer -->
-      <div class="mt-6 pt-3 border-t border-slate-100 text-center text-[11px] text-slate-400 space-y-1">
-        <p class="flex items-center justify-center gap-1">
-          <i class="fa-solid fa-lock text-emerald-600"></i>
-          <span id="lbl-secured-by">Protégé par le protocole Bayam-Sellam Escrow CM</span>
+      <!-- GPS Delivery Location Section -->
+      <div class="space-y-2 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-200">
+        <div class="flex justify-between items-center">
+          <label class="text-xs font-bold text-emerald-900 uppercase flex items-center gap-1.5">
+            <i class="fa-solid fa-location-crosshairs text-emerald-600"></i>
+            Coordonnées GPS de Livraison
+          </label>
+          <span id="gpsAccuracy" class="text-[10px] text-emerald-700 font-semibold">Prêt</span>
+        </div>
+
+        <!-- 1-Tap Geolocation Button -->
+        <button type="button" onclick="acquireExactGPS()" id="btnGetGPS" class="w-full bg-white hover:bg-emerald-50 text-emerald-800 text-xs font-bold py-2.5 px-3 rounded-xl border border-emerald-300 shadow-sm flex items-center justify-center gap-2 transition active:scale-95">
+          <i class="fa-solid fa-satellite-dish text-emerald-600"></i>
+          <span>📍 Utiliser ma position GPS exacte actuelle</span>
+        </button>
+
+        <!-- Leaflet Map Container -->
+        <div id="mapPicker" class="w-full my-2 border border-slate-300"></div>
+
+        <!-- Landmark Text Input for Informal Address -->
+        <div class="pt-1">
+          <label class="block text-[11px] font-semibold text-slate-600 mb-1">
+            Repère informel (Boutique, carrefour, couleur portail) :
+          </label>
+          <input type="text" id="landmarkInput" placeholder="Ex: En face pharmacie du peuple, portail vert" class="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500">
+        </div>
+      </div>
+
+      <!-- Rider View Preview: 1-Tap Google Maps Navigation -->
+      <div id="riderNavPreview" class="p-3 bg-slate-900 text-white rounded-2xl space-y-2 text-xs">
+        <div class="flex justify-between items-center text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+          <span>Aperçu Livreur Moto</span>
+          <i class="fa-solid fa-motorcycle text-amber-400"></i>
+        </div>
+        <p class="text-slate-300 text-[11px]">
+          Le livreur reçoit l'itinéraire direct vers vos coordonnées :
         </p>
+        <a id="googleMapsRouteLink" href="https://maps.google.com" target="_blank" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-2 transition">
+          <i class="fa-solid fa-diamond-turn-right"></i>
+          <span>Ouvrir l'Itinéraire dans Google Maps</span>
+        </a>
+      </div>
+
+      <!-- 4-Digit Release OTP Card -->
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-center space-y-1">
+        <div class="text-[10px] font-bold text-amber-800 uppercase tracking-widest">Code Secret de Libération</div>
+        <div class="font-mono text-2xl font-black text-amber-900 tracking-widest" id="releaseCodeDisplay">8492</div>
+        <div class="text-[10px] text-amber-700">Donnez ce code au motoman après vérification du colis à votre porte.</div>
       </div>
 
     </div>
   </div>
 
   <script>
-    let currentLang = 'fr';
-    let selectedOperator = 'MTN';
-    let currentOrder = null;
+    let map, marker;
+    let currentCoords = { lat: 4.0511, lng: 9.7085 }; // Default to Douala Akwa
 
-    const i18n = {
-      fr: {
-        tagline: "Protection acheteur & vendeur Cameroun 🇨🇲",
-        ref: "RÉFÉRENCE",
-        pending: "En attente",
-        locked: "Séquestre Bloqué",
-        completed: "Validé & Payé",
-        item_price: "Prix article :",
-        delivery_fee: "Course Livreur Moto :",
-        protection: "Séquestre garanti 100% :",
-        free: "Inclus",
-        total: "Total à bloquer :",
-        choose_payment: "Mode de Paiement Sécurisé",
-        phone: "Numéro Mobile Money :",
-        pay_btn: "Bloquer les fonds en Escrow",
-        locked_title: "Fonds Bloqués en Sécurité !",
-        locked_desc: "Le vendeur et le livreur ne toucheront l'argent qu'après votre inspection.",
-        secret_code: "CODE DE LIBÉRATION (4 CHIFFRES)",
-        code_warn: "⚠️ Ne donnez ce code au livreur qu'après avoir inspecté le colis !",
-        rider_action: "Test Livraison Moto (Remise du colis) :",
-        verify_btn: "Valider & Payer Livreur",
-        dispute_btn: "Refuser le colis (Litige & Retour)",
-        success_title: "Transaction Terminée avec Succès !",
-        success_desc: "Le livreur a reçu sa course et le vendeur a reçu son paiement instantanément.",
-        secured_by: "Protégé par le protocole Bayam-Sellam Escrow CM"
-      },
-      en: {
-        tagline: "Buyer & Seller Trust Layer for Cameroon 🇨🇲",
-        ref: "REFERENCE",
-        pending: "Awaiting Payment",
-        locked: "Escrow Locked",
-        completed: "Completed & Paid",
-        item_price: "Item Price:",
-        delivery_fee: "Moto Rider Delivery:",
-        protection: "100% Custodial Escrow:",
-        free: "Included",
-        total: "Total to Deposit:",
-        choose_payment: "Secure Payment Method",
-        phone: "Mobile Money Number:",
-        pay_btn: "Lock Funds in Escrow",
-        locked_title: "Funds Safely Locked!",
-        locked_desc: "The seller and moto rider will ONLY be paid after you inspect and accept the parcel.",
-        secret_code: "RELEASE CODE (4 DIGITS)",
-        code_warn: "⚠️ NEVER share this code with the rider until you inspect the parcel!",
-        rider_action: "Rider Delivery Handover (Inspection Test):",
-        verify_btn: "Confirm Code & Release Payout",
-        dispute_btn: "Reject Parcel (Return & Refund)",
-        success_title: "Transaction Successfully Completed!",
-        success_desc: "The rider collected their delivery fee and the seller received their payout instantly.",
-        secured_by: "Secured by Bayam-Sellam Escrow CM Protocol"
-      }
-    };
+    function initMap() {
+      map = L.map('mapPicker').setView([currentCoords.lat, currentCoords.lng], 14);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
 
-    function updateLanguage() {
-      const dict = i18n[currentLang];
-      document.getElementById('lbl-tagline').innerText = dict.tagline;
-      document.getElementById('lbl-ref').innerText = dict.ref;
-      document.getElementById('lbl-item-price').innerText = dict.item_price;
-      document.getElementById('lbl-delivery-fee').innerText = dict.delivery_fee;
-      document.getElementById('lbl-protection').innerText = dict.protection;
-      document.getElementById('lbl-free').innerText = dict.free;
-      document.getElementById('lbl-total').innerText = dict.total;
-      document.getElementById('lbl-choose-payment').innerText = dict.choose_payment;
-      document.getElementById('lbl-phone').innerText = dict.phone;
-      document.getElementById('btnPayText').innerText = dict.pay_btn;
-      document.getElementById('lbl-locked-title').innerText = dict.locked_title;
-      document.getElementById('lbl-locked-desc').innerText = dict.locked_desc;
-      document.getElementById('lbl-secret-code').innerText = dict.secret_code;
-      document.getElementById('lbl-code-warn').innerText = dict.code_warn;
-      document.getElementById('lbl-rider-action').innerText = dict.rider_action;
-      document.getElementById('btnVerifyText').innerText = dict.verify_btn;
-      document.getElementById('btnDisputeText').innerText = dict.dispute_btn;
-      document.getElementById('lbl-success-title').innerText = dict.success_title;
-      document.getElementById('lbl-success-desc').innerText = dict.success_desc;
-      document.getElementById('lbl-secured-by').innerText = dict.secured_by;
-      document.getElementById('currentLangLabel').innerText = currentLang === 'fr' ? 'EN' : 'FR';
+      marker = L.marker([currentCoords.lat, currentCoords.lng], { draggable: true }).addTo(map);
+      marker.on('dragend', function (e) {
+        const position = marker.getLatLng();
+        updateCoords(position.lat, position.lng, 'Déplacé manuellement');
+      });
+
+      updateRouteLink(currentCoords.lat, currentCoords.lng);
     }
 
-    document.getElementById('langToggleBtn').addEventListener('click', () => {
-      currentLang = currentLang === 'fr' ? 'en' : 'fr';
-      updateLanguage();
-    });
-
-    function selectOperator(op) {
-      selectedOperator = op;
-      const mtnBtn = document.getElementById('btnOperatorMTN');
-      const oraBtn = document.getElementById('btnOperatorOrange');
-      if (op === 'MTN') {
-        mtnBtn.className = "border-2 border-yellow-400 bg-yellow-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-        oraBtn.className = "border-2 border-slate-200 bg-white hover:bg-slate-50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-      } else {
-        oraBtn.className = "border-2 border-orange-500 bg-orange-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-        mtnBtn.className = "border-2 border-slate-200 bg-white hover:bg-slate-50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-      }
+    function updateCoords(lat, lng, accuracyText) {
+      currentCoords = { lat, lng };
+      document.getElementById('gpsAccuracy').innerText = accuracyText || 'GPS Fixé';
+      updateRouteLink(lat, lng);
     }
 
-    // Load Order from Query Param ?code=CM-ESC-XXXXX
-    async function loadOrder() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code') || 'CM-ESC-DEFAULT';
-      
-      try {
-        const res = await fetch(`/api/orders/${code}`);
-        const data = await res.json();
-        if (data.success && data.order) {
-          currentOrder = data.order;
-          renderOrder(data.order);
-        } else {
-          document.getElementById('itemTitleDisplay').innerText = "Commande introuvable";
-        }
-      } catch (err) {
-        console.error("Erreur de chargement:", err);
-      }
+    function updateRouteLink(lat, lng) {
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+      document.getElementById('googleMapsRouteLink').href = url;
     }
 
-    function renderOrder(order) {
-      document.getElementById('orderCodeDisplay').innerText = order.orderCode;
-      document.getElementById('itemTitleDisplay').innerText = order.itemTitle;
-      document.getElementById('sellerNameDisplay').innerText = order.sellerName + " (" + order.sellerPhone + ")";
-      document.getElementById('itemPriceDisplay').innerText = order.itemPrice.toLocaleString() + " FCFA";
-      document.getElementById('deliveryFeeDisplay').innerText = order.deliveryFee.toLocaleString() + " FCFA";
-      document.getElementById('totalAmountDisplay').innerText = order.totalAmount.toLocaleString() + " FCFA";
-
-      if (order.status === 'PENDING_PAYMENT') {
-        document.getElementById('paymentSelectionSection').classList.remove('hidden');
-        document.getElementById('escrowLockedSection').classList.add('hidden');
-        document.getElementById('completedSection').classList.add('hidden');
-      } else if (order.status === 'ESCROW_LOCKED' || order.status === 'IN_TRANSIT' || order.status === 'DELIVERED_PENDING_CONFIRM') {
-        document.getElementById('paymentSelectionSection').classList.add('hidden');
-        document.getElementById('escrowLockedSection').classList.remove('hidden');
-        document.getElementById('completedSection').classList.add('hidden');
-        document.getElementById('orderStatusBadge').className = "bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1";
-        document.getElementById('orderStatusText').innerText = i18n[currentLang].locked;
-        if (order.rawReleaseCodeForTesting) {
-          document.getElementById('releaseCodeDisplay').innerText = order.rawReleaseCodeForTesting;
-        }
-      } else if (order.status === 'COMPLETED') {
-        document.getElementById('paymentSelectionSection').classList.add('hidden');
-        document.getElementById('escrowLockedSection').classList.add('hidden');
-        document.getElementById('completedSection').classList.remove('hidden');
-        document.getElementById('orderStatusBadge').className = "bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1";
-        document.getElementById('orderStatusText').innerText = i18n[currentLang].completed;
-      }
-    }
-
-    // Trigger Payment / Sandbox Simulation
-    async function triggerPayment() {
-      if (!currentOrder) return;
-      const phone = document.getElementById('buyerPhoneInput').value.trim();
-      const btn = document.getElementById('btnPay');
-      btn.disabled = true;
-      btn.innerText = "Simulation USSD push...";
-
-      try {
-        const res = await fetch(`/api/orders/${currentOrder.orderCode}/simulate-payment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ buyerPhone: '237' + phone })
-        });
-        const data = await res.json();
-        if (data.success) {
-          currentOrder = data.order;
-          document.getElementById('releaseCodeDisplay').innerText = data.secretReleaseCodeForBuyer;
-          renderOrder(data.order);
-        } else {
-          alert("Erreur: " + data.error);
-        }
-      } catch (err) {
-        alert("Erreur de connexion API");
-      } finally {
-        btn.disabled = false;
-        btn.innerText = i18n[currentLang].pay_btn;
-      }
-    }
-
-    // Rider verifies 4-digit code
-    async function verifyRiderCode() {
-      if (!currentOrder) return;
-      const code = document.getElementById('riderCodeInput').value.trim();
-      if (code.length !== 4) {
-        alert("Entrez un code à 4 chiffres");
+    // 1-Tap Browser Geolocation
+    function acquireExactGPS() {
+      const btn = document.getElementById('btnGetGPS');
+      if (!navigator.geolocation) {
+        alert("La géolocalisation n'est pas supportée par votre navigateur.");
         return;
       }
+      btn.innerText = "Recherche satellite en cours...";
 
-      try {
-        const res = await fetch(`/api/orders/${currentOrder.orderCode}/verify-code`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ releaseCode: code })
-        });
-        const data = await res.json();
-        if (data.success) {
-          alert(`✅ Livraison validée !\n- Vendeur: ${data.sellerPayout} FCFA\n- Course moto: ${data.riderPayout} FCFA`);
-          renderOrder(data.order);
-        } else {
-          alert("❌ " + data.message);
-        }
-      } catch (err) {
-        alert("Erreur lors de la validation");
-      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const acc = Math.round(position.coords.accuracy);
+
+          map.setView([lat, lng], 16);
+          marker.setLatLng([lat, lng]);
+          updateCoords(lat, lng, `Précision: ±${acc}m`);
+          btn.innerHTML = `<i class="fa-solid fa-check text-emerald-600"></i> <span>Position capturée (±${acc}m)</span>`;
+        },
+        (error) => {
+          alert("Impossible d'obtenir la position GPS. Vous pouvez déplacer le marqueur sur la carte.");
+          btn.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> <span>Réessayer le GPS</span>`;
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
     }
 
-    // Dispute Order
-    async function disputeOrder() {
-      if (!currentOrder) return;
-      if (!confirm("Voulez-vous vraiment refuser ce colis et ouvrir un litige ?")) return;
-      
-      try {
-        const res = await fetch(`/api/orders/${currentOrder.orderCode}/dispute`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: "Article non conforme refusé à la porte." })
-        });
-        const data = await res.json();
-        if (data.success) {
-          alert("⚠️ Litige ouvert. Le livreur est remboursé de sa course et le colis retourne au vendeur.");
-          location.reload();
-        }
-      } catch (err) {
-        alert("Erreur lors de l'ouverture du litige");
-      }
-    }
-
-    // Initialize
-    updateLanguage();
-    loadOrder();
+    window.addEventListener('load', initMap);
   </script>
 </body>
 </html>

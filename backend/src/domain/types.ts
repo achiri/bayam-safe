@@ -1,97 +1,133 @@
-export type UserRole = 'SELLER' | 'BUYER' | 'RIDER' | 'ADMIN';
+export type UserRole = 'MERCHANT' | 'BUYER' | 'RIDER' | 'ADMIN';
 export type SupportedLanguage = 'fr' | 'en';
 
-export type EscrowStatus =
-  | 'DRAFT'
-  | 'PENDING_PAYMENT'
-  | 'ESCROW_LOCKED'
-  | 'IN_TRANSIT'
-  | 'DELIVERED_PENDING_CONFIRM'
-  | 'COMPLETED'
-  | 'DISPUTED'
-  | 'REFUNDED_FULL'
-  | 'REFUNDED_PARTIAL'
-  | 'EXPIRED';
-
+export type OrderType = 'INTRA_CITY' | 'INTER_CITY_AGENCY';
+export type PaymentMode = 'DIGITAL_ESCROW' | 'CASH_ON_DELIVERY';
 export type PaymentNetwork = 'MTN_MOMO' | 'ORANGE_MONEY';
 
-export interface User {
-  id: string;
-  telegramId?: number;
-  phoneNumber: string;
-  fullName: string;
-  role: UserRole;
-  preferredLanguage: SupportedLanguage;
-  isVerifiedMerchant: boolean;
+export type EscrowOrderStatus =
+  | 'DRAFT'
+  | 'SEARCHING_RIDER'
+  | 'ASSIGNED'
+  | 'AT_PICKUP'
+  | 'IN_TRANSIT'
+  | 'AGENCY_DROPPED'
+  | 'DESTINATION_HUB'
+  | 'LAST_MILE_ASSIGNED'
+  | 'LAST_MILE_TRANSIT'
+  | 'DELIVERED'
+  | 'SETTLED'
+  | 'DISPUTED'
+  | 'CANCELLED'
+  | 'EXPIRED';
+
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
 }
 
-export interface EscrowOrder {
+export interface TravelAgency {
   id: string;
-  orderCode: string;
-  sellerId: string;
-  sellerName: string;
-  sellerPhone: string;
+  name: string;           // e.g. "Moghamo Express", "Guarantee Express"
+  city: string;           // "Douala", "Yaoundé", "Bamenda", "Buea"
+  terminalName: string;   // "Bonaberi Terminal", "Mvan Agency"
+  contactPhone: string;
+  location: GeoLocation;
+}
+
+export interface RiderProfile {
+  userId: string;
+  fullName: string;
+  phoneNumber: string;
+  cniNumber: string;
+  vehicleType: 'MOTO' | 'CAR' | 'VAN';
+  walletBalance: number;  // Collateral float (FCFA)
+  isActive: boolean;      // /on_duty or /off_duty
+  trustScore: number;     // 1.0 - 5.0
+  currentLocation?: GeoLocation;
+  lastLocationUpdate?: Date;
+}
+
+export interface UnifiedOrder {
+  id: string;
+  trackingCode: string;   // e.g. "BS-DLA-83921"
+  orderType: OrderType;
   
-  buyerId?: string;
-  buyerName?: string;
-  buyerPhone?: string;
+  merchantId: string;
+  merchantName: string;
+  merchantPhone: string;
 
-  riderId?: string;
-  riderName?: string;
-  riderPhone?: string;
+  recipientPhone: string;
+  recipientName?: string;
 
+  firstMileRiderId?: string;
+  firstMileRiderName?: string;
+  firstMileRiderPhone?: string;
+
+  lastMileRiderId?: string;
+  lastMileRiderName?: string;
+  lastMileRiderPhone?: string;
+
+  agencyId?: string;
+  agencyName?: string;
+  agencyTerminal?: string;
+  agencyWaybillNumber?: string;
+  agencyWaybillUrl?: string;
+
+  // Informal Cameroon Waypoints
+  pickupAddress: string;
+  pickupLocation?: GeoLocation;
+  dropoffAddress: string;
+  dropoffLocation?: GeoLocation;
+  landmarkNotes?: string;
+  voiceNoteUrl?: string;
+
+  // Financials
   itemTitle: string;
-  itemDescription?: string;
-  itemPrice: number;        // FCFA
-  deliveryFee: number;      // FCFA
-  platformFee: number;      // 2.5%
-  totalAmount: number;      // itemPrice + deliveryFee + feeShare
-
-  status: EscrowStatus;
+  itemPrice: number;            // FCFA
+  deliveryFee: number;          // FCFA
+  agencyFee: number;            // FCFA
+  platformCommission: number;   // 2.5%
+  totalAmount: number;
+  codAmount: number;            // FCFA if COD
+  paymentMode: PaymentMode;
   paymentNetwork?: PaymentNetwork;
   paymentReference?: string;
 
-  releaseCodeHash?: string;
-  rawReleaseCodeForTesting?: string; // Kept in memory only in sandbox/test mode
+  // Verification & PoD
+  deliveryOtpHash: string;
+  rawReleaseCodeForTesting?: string;
   verificationAttempts: number;
   maxVerificationAttempts: number;
+  podPhotoUrl?: string;
 
-  deliveryAddress?: string;
-  disputeReason?: string;
-
+  status: EscrowOrderStatus;
   createdAt: Date;
   updatedAt: Date;
-  expiresAt?: Date;
 }
 
-export interface CreateOrderDTO {
-  sellerTelegramId?: number;
-  sellerName: string;
-  sellerPhone: string;
+export interface CreateUnifiedOrderDTO {
+  orderType: OrderType;
+  merchantName: string;
+  merchantPhone: string;
+  recipientPhone: string;
+  recipientName?: string;
   itemTitle: string;
-  itemDescription?: string;
   itemPrice: number;
   deliveryFee: number;
-  buyerPhone?: string;
-  deliveryAddress?: string;
+  agencyId?: string;
+  agencyFee?: number;
+  paymentMode: PaymentMode;
+  pickupAddress: string;
+  pickupLocation?: GeoLocation;
+  dropoffAddress: string;
+  dropoffLocation?: GeoLocation;
+  landmarkNotes?: string;
+  voiceNoteUrl?: string;
 }
 
-export interface PaymentInitiationResult {
-  success: boolean;
-  paymentReference: string;
-  instructions: {
-    en: string;
-    fr: string;
-  };
-  ussdPromptCode?: string;
-  redirectUrl?: string;
-}
-
-export interface PaymentWebhookPayload {
-  event: 'payment.successful' | 'payment.failed';
-  orderCode: string;
-  amount: number;
-  operator: 'MTN' | 'ORANGE';
-  reference: string;
-  phoneNumber: string;
+export interface DispatchCandidate {
+  rider: RiderProfile;
+  distanceKm: number;
+  isFloatEligible: boolean;
 }

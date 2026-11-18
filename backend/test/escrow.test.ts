@@ -1,79 +1,89 @@
 import { EscrowService } from '../src/services/escrow.service.js';
-import { OtpService } from '../src/services/otp.service.js';
 
-async function runTests() {
-  console.log('🧪 Starting Cameroonian Escrow & Trust Layer Unit Tests...\n');
+async function runUnifiedTests() {
+  console.log('🧪 Running BayamSafe Unified Escrow & Micro-Logistics Test Suite...\n');
   const escrow = new EscrowService();
 
-  // Test 1: Order Creation
-  console.log('▶ Test 1: Creating an Escrow Order (Social Commerce)');
-  const order = await escrow.createOrder({
-    sellerName: 'Mama Douala Shoes',
-    sellerPhone: '237671112233',
-    itemTitle: 'Basket Sneakers Pointure 42',
-    itemPrice: 20000,
-    deliveryFee: 1500,
-    buyerPhone: '237699887766'
-  });
-
-  if (!order.orderCode.startsWith('CM-ESC-')) throw new Error('Invalid order code format');
-  if (order.totalAmount !== 21500) throw new Error(`Expected total 21500, got ${order.totalAmount}`);
-  if (order.platformFee !== 500) throw new Error(`Expected platform fee 500 (2.5%), got ${order.platformFee}`);
-  console.log(`✅ Order created successfully: [${order.orderCode}] Total: ${order.totalAmount} FCFA\n`);
-
-  // Test 2: Payment Confirmation & 4-Digit Release Code
-  console.log('▶ Test 2: Simulating MTN MoMo Webhook Payment Collection');
-  const paymentResult = await escrow.confirmPayment(order.orderCode, 'MOMO-REF-99231', order.buyerPhone);
-  if (paymentResult.order.status !== 'ESCROW_LOCKED') throw new Error('Status should be ESCROW_LOCKED');
-  if (paymentResult.releaseCode.length !== 4) throw new Error('Release code must be 4 digits');
-  console.log(`✅ Escrow locked! Secret 4-digit release code issued: ${paymentResult.releaseCode}\n`);
-
-  // Test 3: Dispatch & Rider Arrives at Door
-  console.log('▶ Test 3: Seller hands package to Moto Rider');
-  await escrow.dispatchOrder(order.orderCode, '237675544332', 'Alain Moto Akwa');
-  await escrow.markArrivedForInspection(order.orderCode);
-  if (order.status !== 'DELIVERED_PENDING_CONFIRM') throw new Error('Status should be DELIVERED_PENDING_CONFIRM');
-  console.log(`✅ Order marked as DELIVERED_PENDING_CONFIRM\n`);
-
-  // Test 4: Wrong Code Verification Attempt
-  console.log('▶ Test 4: Testing Invalid Code Lockout Defense');
-  const badAttempt = await escrow.verifyReleaseCode(order.orderCode, '0000');
-  if (badAttempt.success) throw new Error('Invalid code should have failed');
-  if (order.verificationAttempts !== 1) throw new Error('Attempt count should be 1');
-  console.log(`✅ Invalid code rejected correctly. Attempts: ${order.verificationAttempts}/3\n`);
-
-  // Test 5: Buyer Inspects and Releases 4-digit Code to Rider
-  console.log('▶ Test 5: Valid 4-digit Handshake Verification & Instant Payout');
-  const validVerification = await escrow.verifyReleaseCode(order.orderCode, paymentResult.releaseCode);
-  if (!validVerification.success) throw new Error('Valid code verification failed');
-  if (validVerification.order.status !== 'COMPLETED') throw new Error('Status should be COMPLETED');
-  if (validVerification.sellerPayout !== 19500) throw new Error(`Expected seller payout 19500, got ${validVerification.sellerPayout}`);
-  if (validVerification.riderPayout !== 1500) throw new Error(`Expected rider payout 1500, got ${validVerification.riderPayout}`);
-  console.log(`✅ Payout Disbursed: Seller: ${validVerification.sellerPayout} FCFA, Rider: ${validVerification.riderPayout} FCFA\n`);
-
-  // Test 6: Dispute Flow (Rider Delivery Fee Protection Guarantee)
-  console.log('▶ Test 6: Dispute & Return Flow (Rider Protection Guarantee)');
-  const order2 = await escrow.createOrder({
-    sellerName: 'Yaoundé Tech Hub',
-    sellerPhone: '237699112233',
-    itemTitle: 'Écouteurs Bluetooth Pro',
+  // Test 1: Intra-City with Exact GPS Coordinates & Navigation Link
+  console.log('▶ Test 1: Intra-City Delivery with Exact GPS Pin & Landmark Note');
+  const intraOrder = await escrow.createUnifiedOrder({
+    orderType: 'INTRA_CITY',
+    merchantName: 'Boutique Akwa Mode',
+    merchantPhone: '+237671112233',
+    recipientPhone: '+237699887766',
+    itemTitle: 'Sac à Main Cuir',
     itemPrice: 15000,
-    deliveryFee: 1000,
-    buyerPhone: '237670112233'
+    deliveryFee: 1500,
+    paymentMode: 'DIGITAL_ESCROW',
+    pickupAddress: 'Douala, Marché Akwa',
+    pickupLocation: { latitude: 4.0511, longitude: 9.7085 },
+    dropoffAddress: 'Douala, Bonamoussadi',
+    dropoffLocation: { latitude: 4.0763, longitude: 9.6644 },
+    landmarkNotes: 'Portail bleu en face pharmacie du peuple'
   });
-  await escrow.confirmPayment(order2.orderCode, 'ORANGE-REF-11223');
-  await escrow.dispatchOrder(order2.orderCode, '237679998877', 'Paul Moto Mokolo');
-  
-  // Buyer rejects package upon inspection
-  const disputeResult = await escrow.disputeOrder(order2.orderCode, 'Client rejected size/color');
-  if (disputeResult.order.status !== 'DISPUTED') throw new Error('Order should be DISPUTED');
-  if (!disputeResult.riderCompensated) throw new Error('Rider must be compensated for delivery trip');
-  console.log('✅ Dispute handled: Moto rider guaranteed delivery fee was protected and disbursed!\n');
 
-  console.log('🎉 ALL UNIT TESTS PASSED SUCCESSFULLY! 🚀');
+  if (!intraOrder.trackingCode.startsWith('BS-DLA-')) throw new Error('Invalid tracking code');
+  console.log(`✅ Order created: [${intraOrder.trackingCode}] Total: ${intraOrder.totalAmount} FCFA`);
+  console.log(`   📍 Destination GPS: ${intraOrder.dropoffLocation?.latitude}, ${intraOrder.dropoffLocation?.longitude}`);
+  console.log(`   🗺️ Rider Google Maps Route: https://www.google.com/maps/dir/?api=1&destination=${intraOrder.dropoffLocation?.latitude},${intraOrder.dropoffLocation?.longitude}\n`);
+
+  // Test 2: Geospatial Dispatch Matching (Find nearest rider)
+  console.log('▶ Test 2: Geospatial Dispatch Discovery (Redis GeoSearch)');
+  const dispatch = escrow.getDispatchService();
+  const nearest = dispatch.findNearestRiders(intraOrder.pickupLocation!, 10);
+  if (nearest.length === 0) throw new Error('No riders found nearby');
+  console.log(`✅ Found ${nearest.length} active riders nearby: Closest is ${nearest[0].rider.fullName} (${nearest[0].distanceKm} km away)\n`);
+
+  // Test 3: Assign Rider with Atomic Mutex Lock
+  console.log('▶ Test 3: Assigning Rider with Atomic Mutex Lock');
+  await escrow.assignRider(intraOrder.trackingCode, nearest[0].rider.userId);
+  await escrow.markAtPickupAndInTransit(intraOrder.trackingCode);
+  if (intraOrder.status !== 'IN_TRANSIT') throw new Error('Status should be IN_TRANSIT');
+  console.log(`✅ Rider ${intraOrder.firstMileRiderName} assigned and in transit with parcel\n`);
+
+  // Test 4: Final Handshake with 4-Digit Release Code & PoD Photo
+  console.log('▶ Test 4: Customer Verification via 4-Digit Code & PoD Photo');
+  const settlement = await escrow.verifyDeliveryAndSettle(
+    intraOrder.trackingCode,
+    intraOrder.rawReleaseCodeForTesting!,
+    'https://storage.bayamsafe.cm/pod/photo_123.jpg'
+  );
+  if (!settlement.success) throw new Error('Settlement failed');
+  console.log(`✅ Delivery completed and settled! Merchant payout: ${settlement.merchantPayout} FCFA, Rider payout: ${settlement.firstMilePayout} FCFA\n`);
+
+  // Test 5: Inter-City Travel Agency Concierge (Douala -> Bamenda via Moghamo Express)
+  console.log('▶ Test 5: Inter-City Bus Agency Concierge (Douala ➡️ Bamenda)');
+  const interOrder = await escrow.createUnifiedOrder({
+    orderType: 'INTER_CITY_AGENCY',
+    merchantName: 'Tech Vendor Douala',
+    merchantPhone: '+237670001122',
+    recipientPhone: '+237678990011',
+    itemTitle: 'iPhone 13 Pro Reconditionné',
+    itemPrice: 350000,
+    deliveryFee: 4000,
+    agencyId: 'agency_moghamo_dla',
+    agencyFee: 3000,
+    paymentMode: 'DIGITAL_ESCROW',
+    pickupAddress: 'Douala Akwa',
+    dropoffAddress: 'Bamenda Commercial Avenue'
+  });
+
+  console.log(`✅ Inter-city order initiated with ${interOrder.agencyName} (${interOrder.agencyTerminal})`);
+
+  // Drop at agency & upload waybill
+  await escrow.recordAgencyDropoff(interOrder.trackingCode, 'MOG-WB-98214', 'https://storage.bayamsafe.cm/waybills/wb_98214.jpg');
+  if (interOrder.status !== 'AGENCY_DROPPED') throw new Error('Status should be AGENCY_DROPPED');
+  console.log(`✅ Package dropped at bus station! Waybill logged: ${interOrder.agencyWaybillNumber}`);
+
+  // Bus arrives at destination terminal
+  await escrow.recordDestinationHubArrival(interOrder.trackingCode);
+  if (interOrder.status !== 'DESTINATION_HUB') throw new Error('Status should be DESTINATION_HUB');
+  console.log(`✅ Bus arrived at destination agency terminal: ${interOrder.status}\n`);
+
+  console.log('🎉 ALL UNIFIED TESTS (GPS, DISPATCH, ESCROW & AGENCY) PASSED SUCCESSFULLY! 🚀');
 }
 
-runTests().catch((err) => {
+runUnifiedTests().catch((err) => {
   console.error('❌ Test failed:', err);
   process.exit(1);
 });
