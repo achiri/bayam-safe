@@ -26,36 +26,63 @@ export interface GeoLocation {
   longitude: number;
 }
 
-export interface TravelAgency {
+export interface User {
   id: string;
-  name: string;           // e.g. "Moghamo Express", "Guarantee Express"
-  city: string;           // "Douala", "Yaoundé", "Bamenda", "Buea"
-  terminalName: string;   // "Bonaberi Terminal", "Mvan Agency"
-  contactPhone: string;
-  location: GeoLocation;
+  telegramId?: number;
+  phoneNumber: string;
+  fullName: string;
+  role: UserRole;
+  preferredLanguage: SupportedLanguage;
+  
+  // Merchant specific fields
+  shopName?: string;
+  city?: string;
+  isVerifiedMerchant: boolean;
+  kycLevel: 1 | 2; // Level 1 = Phone verified, Level 2 = CNI verified badge
+  cniNumber?: string;
+  cniPhotoUrl?: string;
+  totalVolumeProcessed: number;
+  unlockedCreditLimit: number; // Working capital inventory loan capability (FCFA)
+  
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface RiderProfile {
   userId: string;
+  telegramId?: number;
   fullName: string;
   phoneNumber: string;
   cniNumber: string;
+  cniPhotoUrl?: string;
   vehicleType: 'MOTO' | 'CAR' | 'VAN';
-  walletBalance: number;  // Collateral float (FCFA)
-  isActive: boolean;      // /on_duty or /off_duty
-  trustScore: number;     // 1.0 - 5.0
+  plateNumber: string;
+  walletBalance: number; // In-app collateral float (FCFA)
+  isActive: boolean;     // /on_duty vs /off_duty
+  trustScore: number;    // 1.0 to 5.0
+  completedDeliveries: number;
   currentLocation?: GeoLocation;
   lastLocationUpdate?: Date;
 }
 
+export interface TravelAgency {
+  id: string;
+  name: string;
+  city: string;
+  terminalName: string;
+  contactPhone: string;
+  location: GeoLocation;
+}
+
 export interface UnifiedOrder {
   id: string;
-  trackingCode: string;   // e.g. "BS-DLA-83921"
+  trackingCode: string;
   orderType: OrderType;
   
   merchantId: string;
   merchantName: string;
   merchantPhone: string;
+  isMerchantVerified?: boolean;
 
   recipientPhone: string;
   recipientName?: string;
@@ -74,7 +101,6 @@ export interface UnifiedOrder {
   agencyWaybillNumber?: string;
   agencyWaybillUrl?: string;
 
-  // Informal Cameroon Waypoints
   pickupAddress: string;
   pickupLocation?: GeoLocation;
   dropoffAddress: string;
@@ -82,19 +108,17 @@ export interface UnifiedOrder {
   landmarkNotes?: string;
   voiceNoteUrl?: string;
 
-  // Financials
   itemTitle: string;
-  itemPrice: number;            // FCFA
-  deliveryFee: number;          // FCFA
-  agencyFee: number;            // FCFA
-  platformCommission: number;   // 2.5%
+  itemPrice: number;
+  deliveryFee: number;
+  agencyFee: number;
+  platformCommission: number;
   totalAmount: number;
-  codAmount: number;            // FCFA if COD
+  codAmount: number;
   paymentMode: PaymentMode;
   paymentNetwork?: PaymentNetwork;
   paymentReference?: string;
 
-  // Verification & PoD
   deliveryOtpHash: string;
   rawReleaseCodeForTesting?: string;
   verificationAttempts: number;
@@ -110,6 +134,7 @@ export interface CreateUnifiedOrderDTO {
   orderType: OrderType;
   merchantName: string;
   merchantPhone: string;
+  isMerchantVerified?: boolean;
   recipientPhone: string;
   recipientName?: string;
   itemTitle: string;

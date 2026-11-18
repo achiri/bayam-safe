@@ -3,106 +3,248 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BayamSafe - Séquestre & Livraison GPS</title>
+  <title>BayamSafe - Séquestre & Micro-Logistique Cameroun</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    #mapPicker { height: 180px; border-radius: 1rem; z-index: 1; }
+    #mapPicker { height: 160px; border-radius: 1rem; z-index: 1; }
+    .pulse-record { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 flex justify-center p-3 sm:p-6">
-  <div class="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col border border-slate-200">
+  <div class="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-slate-200">
     
     <!-- Top Header -->
-    <div class="bg-gradient-to-r from-emerald-600 to-teal-700 p-5 text-white flex justify-between items-center">
+    <div class="bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-800 p-5 text-white flex justify-between items-center">
       <div>
         <div class="flex items-center gap-2">
           <i class="fa-solid fa-shield-halved text-amber-300 text-xl"></i>
-          <h1 class="font-extrabold text-lg tracking-tight">BayamSafe</h1>
+          <h1 class="font-black text-lg tracking-tight">BayamSafe</h1>
+          <span class="bg-white/20 text-[10px] font-black uppercase px-2 py-0.5 rounded-full tracking-wider">CM 🇨🇲</span>
         </div>
-        <p class="text-xs text-emerald-100 mt-0.5">Séquestre MoMo & Livraison GPS 🇨🇲</p>
+        <p class="text-xs text-emerald-100 mt-0.5">Paiement Sécurisé & Livraison GPS</p>
       </div>
-      <button id="langToggleBtn" class="bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold transition flex items-center gap-1">
+      <button id="langToggleBtn" class="bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold transition flex items-center gap-1 backdrop-blur-sm">
         <i class="fa-solid fa-globe"></i> <span id="currentLangLabel">EN</span>
       </button>
     </div>
 
-    <!-- Main Content -->
+    <!-- Main Body Content -->
     <div class="p-5 flex-1 flex flex-col justify-between space-y-4">
       
-      <!-- Order Summary Card -->
-      <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-sm space-y-2">
-        <div class="flex justify-between items-center">
-          <span class="text-xs font-mono font-bold text-slate-500" id="orderCodeDisplay">BS-DLA-83921</span>
-          <span class="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded-full">Sécurisé</span>
+      <!-- Verified Merchant Trust Banner -->
+      <div id="merchantBadgeBanner" class="bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-amber-500/10 border border-emerald-300 rounded-2xl p-3 flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+            <i class="fa-solid fa-certificate text-amber-300"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-1">
+              <span class="font-extrabold text-xs text-slate-900" id="merchantNameDisplay">Boutique Chic Akwa</span>
+              <i class="fa-solid fa-circle-check text-emerald-600 text-xs" title="Vendeur Vérifié KYC Niveau 2"></i>
+            </div>
+            <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">🏅 Vendeur Vérifié BayamSafe</span>
+          </div>
         </div>
-        <h2 class="text-base font-bold text-slate-900" id="itemTitleDisplay">Colis en cours de livraison</h2>
-        <div class="flex justify-between text-xs text-slate-600 pt-1 border-t border-slate-200">
-          <span>Montant Total :</span>
-          <span class="font-extrabold text-emerald-700 text-sm" id="totalAmountDisplay">15,000 FCFA</span>
+        <span class="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-1 rounded-full flex items-center gap-1">
+          <i class="fa-solid fa-shield-check"></i> 100% Garanti
+        </span>
+      </div>
+
+      <!-- Order Summary Card -->
+      <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 text-sm space-y-2">
+        <div class="flex justify-between items-center text-xs">
+          <span class="font-mono font-bold text-slate-500" id="orderCodeDisplay">BS-DLA-80398</span>
+          <span id="orderStatusBadge" class="bg-amber-100 text-amber-800 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
+            En attente de paiement
+          </span>
+        </div>
+
+        <div>
+          <h2 class="text-base font-extrabold text-slate-900" id="itemTitleDisplay">Colis en préparation</h2>
+          <div class="flex justify-between items-center text-xs text-slate-600 pt-1">
+            <span>Prix article :</span>
+            <span class="font-bold text-slate-800" id="itemPriceDisplay">0 FCFA</span>
+          </div>
+          <div class="flex justify-between items-center text-xs text-slate-600">
+            <span class="flex items-center gap-1">
+              <i class="fa-solid fa-motorcycle text-slate-400"></i> Course Livreur Moto :
+            </span>
+            <span class="font-bold text-slate-800" id="deliveryFeeDisplay">0 FCFA</span>
+          </div>
+        </div>
+
+        <div class="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-extrabold text-slate-900">
+          <span>Total à bloquer en séquestre :</span>
+          <span class="text-emerald-700 text-base font-black" id="totalAmountDisplay">0 FCFA</span>
         </div>
       </div>
 
-      <!-- GPS Delivery Location Section -->
-      <div class="space-y-2 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-200">
+      <!-- 1. GPS Delivery Pin-Drop Section -->
+      <div class="space-y-2 bg-emerald-50/40 p-4 rounded-2xl border border-emerald-200">
         <div class="flex justify-between items-center">
           <label class="text-xs font-bold text-emerald-900 uppercase flex items-center gap-1.5">
             <i class="fa-solid fa-location-crosshairs text-emerald-600"></i>
-            Coordonnées GPS de Livraison
+            Point GPS Exact de Livraison
           </label>
-          <span id="gpsAccuracy" class="text-[10px] text-emerald-700 font-semibold">Prêt</span>
+          <span id="gpsAccuracy" class="text-[10px] text-emerald-700 font-bold">Satellite Prêt</span>
         </div>
 
-        <!-- 1-Tap Geolocation Button -->
         <button type="button" onclick="acquireExactGPS()" id="btnGetGPS" class="w-full bg-white hover:bg-emerald-50 text-emerald-800 text-xs font-bold py-2.5 px-3 rounded-xl border border-emerald-300 shadow-sm flex items-center justify-center gap-2 transition active:scale-95">
           <i class="fa-solid fa-satellite-dish text-emerald-600"></i>
           <span>📍 Utiliser ma position GPS exacte actuelle</span>
         </button>
 
-        <!-- Leaflet Map Container -->
-        <div id="mapPicker" class="w-full my-2 border border-slate-300"></div>
+        <div id="mapPicker" class="w-full my-2 border border-slate-300 shadow-inner"></div>
 
-        <!-- Landmark Text Input for Informal Address -->
-        <div class="pt-1">
+        <div>
           <label class="block text-[11px] font-semibold text-slate-600 mb-1">
-            Repère informel (Boutique, carrefour, couleur portail) :
+            Repère informel (Boutique, carrefour, couleur barrière) :
           </label>
-          <input type="text" id="landmarkInput" placeholder="Ex: En face pharmacie du peuple, portail vert" class="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500">
+          <input type="text" id="landmarkInput" placeholder="Ex: Portail bleu face pharmacie du peuple" class="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500">
         </div>
       </div>
 
-      <!-- Rider View Preview: 1-Tap Google Maps Navigation -->
-      <div id="riderNavPreview" class="p-3 bg-slate-900 text-white rounded-2xl space-y-2 text-xs">
-        <div class="flex justify-between items-center text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-          <span>Aperçu Livreur Moto</span>
-          <i class="fa-solid fa-motorcycle text-amber-400"></i>
+      <!-- 2. WOW Feature: 15-Second Audio Guide (Voice Note Recorder) -->
+      <div class="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-3.5 space-y-2">
+        <div class="flex justify-between items-center">
+          <span class="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+            <i class="fa-solid fa-microphone-lines text-amber-600"></i>
+            Note Vocale d'Itinéraire (15s max)
+          </span>
+          <span id="voiceDurationDisplay" class="text-[10px] font-mono font-bold text-amber-700">00:00 / 00:15</span>
         </div>
-        <p class="text-slate-300 text-[11px]">
-          Le livreur reçoit l'itinéraire direct vers vos coordonnées :
+        <p class="text-[11px] text-slate-600 leading-snug">
+          Expliquez rapidement votre quartier en Pidgin ou Français pour que le motoman arrive sans vous appeler :
         </p>
-        <a id="googleMapsRouteLink" href="https://maps.google.com" target="_blank" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-2 transition">
-          <i class="fa-solid fa-diamond-turn-right"></i>
-          <span>Ouvrir l'Itinéraire dans Google Maps</span>
+        <div class="flex gap-2 items-center">
+          <button type="button" id="btnRecordVoice" onclick="toggleVoiceRecording()" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition">
+            <i class="fa-solid fa-microphone"></i> <span id="recordBtnText">Enregistrer la Voix</span>
+          </button>
+          <audio id="voicePlayback" controls class="hidden h-9 w-44"></audio>
+        </div>
+      </div>
+
+      <!-- Payment Section -->
+      <div id="paymentSelectionSection" class="space-y-3 pt-1">
+        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+          Paiement Mobile Sécurisé (MoMo / Orange Money)
+        </label>
+        
+        <div class="grid grid-cols-2 gap-3">
+          <button type="button" onclick="selectOperator('MTN')" id="btnOperatorMTN" class="border-2 border-yellow-400 bg-yellow-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition">
+            <span class="font-black text-sm text-yellow-800">MTN MoMo</span>
+            <span class="text-[10px] text-yellow-700 font-semibold">*126# USSD Prompt</span>
+          </button>
+          <button type="button" onclick="selectOperator('ORANGE')" id="btnOperatorOrange" class="border-2 border-slate-200 hover:border-orange-500 rounded-2xl p-3 flex flex-col items-center gap-1 transition">
+            <span class="font-black text-sm text-orange-600">Orange Money</span>
+            <span class="text-[10px] text-orange-700 font-semibold">#150# USSD Prompt</span>
+          </button>
+        </div>
+
+        <button id="btnPay" onclick="triggerPayment()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition active:scale-95">
+          <i class="fa-solid fa-lock"></i>
+          <span>Bloquer les Fonds en Séquestre</span>
+        </button>
+      </div>
+
+      <!-- 4-Digit Release Code Section (Shown after payment) -->
+      <div id="escrowLockedSection" class="hidden space-y-3">
+        <div class="bg-gradient-to-br from-emerald-50 to-teal-100 border-2 border-emerald-500 rounded-2xl p-4 text-center space-y-2">
+          <div class="w-11 h-11 bg-emerald-600 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
+            <i class="fa-solid fa-key text-lg"></i>
+          </div>
+          <h3 class="font-black text-slate-900 text-sm">Fonds Sécurisés en Séquestre !</h3>
+          
+          <div class="bg-white rounded-xl py-3 px-4 shadow-sm border border-emerald-200">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CODE SECRET DE LIBÉRATION</div>
+            <div class="font-mono text-3xl font-black text-emerald-700 tracking-widest my-1" id="releaseCodeDisplay">----</div>
+            <div class="text-[10px] text-red-600 font-bold">⚠️ Ne donnez ce code au livreur qu'après avoir inspecté le colis !</div>
+          </div>
+        </div>
+
+        <!-- Rider Navigation Deep Link -->
+        <a id="riderNavBtn" href="https://maps.google.com" target="_blank" class="w-full bg-slate-900 hover:bg-black text-white text-xs font-bold py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 transition">
+          <i class="fa-solid fa-diamond-turn-right text-emerald-400"></i>
+          <span>Aperçu Livreur : Suivre l'Itinéraire Google Maps</span>
         </a>
       </div>
 
-      <!-- 4-Digit Release OTP Card -->
-      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-center space-y-1">
-        <div class="text-[10px] font-bold text-amber-800 uppercase tracking-widest">Code Secret de Libération</div>
-        <div class="font-mono text-2xl font-black text-amber-900 tracking-widest" id="releaseCodeDisplay">8492</div>
-        <div class="text-[10px] text-amber-700">Donnez ce code au motoman après vérification du colis à votre porte.</div>
-      </div>
-
     </div>
+
+    <!-- Trust Footer -->
+    <div class="p-3 bg-slate-50 border-t border-slate-200 text-center text-[10px] text-slate-500 flex items-center justify-center gap-1.5 font-medium">
+      <i class="fa-solid fa-shield-halved text-emerald-600"></i>
+      <span>BayamSafe - Séquestre Social Commerce Agréé Cameroun</span>
+    </div>
+
   </div>
 
   <script>
     let map, marker;
-    let currentCoords = { lat: 4.0511, lng: 9.7085 }; // Default to Douala Akwa
+    let currentCoords = { lat: 4.0511, lng: 9.7085 }; // Douala Akwa
+    let currentOrder = null;
 
+    // 1. Audio MediaRecorder Implementation (15s Max Voice Note)
+    let mediaRecorder, audioChunks = [], recordInterval, recordSeconds = 0;
+
+    async function toggleVoiceRecording() {
+      const btn = document.getElementById('btnRecordVoice');
+      const text = document.getElementById('recordBtnText');
+      const timerDisplay = document.getElementById('voiceDurationDisplay');
+      const audioPlayback = document.getElementById('voicePlayback');
+
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        clearInterval(recordInterval);
+        btn.classList.remove('bg-red-600', 'pulse-record');
+        btn.classList.add('bg-amber-500');
+        text.innerText = "Réenregistrer la Voix";
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        recordSeconds = 0;
+
+        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+        mediaRecorder.onstop = () => {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+          const audioUrl = URL.createObjectURL(audioBlob);
+          audioPlayback.src = audioUrl;
+          audioPlayback.classList.remove('hidden');
+        };
+
+        mediaRecorder.start();
+        btn.classList.remove('bg-amber-500');
+        btn.classList.add('bg-red-600', 'pulse-record');
+        text.innerText = "Arrêter l'enregistrement";
+
+        recordInterval = setInterval(() => {
+          recordSeconds++;
+          const formatted = recordSeconds < 10 ? `0${recordSeconds}` : recordSeconds;
+          timerDisplay.innerText = `00:${formatted} / 00:15`;
+          if (recordSeconds >= 15) {
+            mediaRecorder.stop();
+            clearInterval(recordInterval);
+            btn.classList.remove('bg-red-600', 'pulse-record');
+            btn.classList.add('bg-amber-500');
+            text.innerText = "Réenregistrer la Voix";
+          }
+        }, 1000);
+
+      } catch (err) {
+        alert("Microphone non accessible ou autorisation refusée.");
+      }
+    }
+
+    // 2. Leaflet GPS Pin-Drop Setup
     function initMap() {
       map = L.map('mapPicker').setView([currentCoords.lat, currentCoords.lng], 14);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -110,54 +252,130 @@
       }).addTo(map);
 
       marker = L.marker([currentCoords.lat, currentCoords.lng], { draggable: true }).addTo(map);
-      marker.on('dragend', function (e) {
-        const position = marker.getLatLng();
-        updateCoords(position.lat, position.lng, 'Déplacé manuellement');
+      marker.on('dragend', function () {
+        const pos = marker.getLatLng();
+        updateCoords(pos.lat, pos.lng, 'Marqueur Déplacé');
       });
 
       updateRouteLink(currentCoords.lat, currentCoords.lng);
     }
 
-    function updateCoords(lat, lng, accuracyText) {
+    function updateCoords(lat, lng, label) {
       currentCoords = { lat, lng };
-      document.getElementById('gpsAccuracy').innerText = accuracyText || 'GPS Fixé';
+      document.getElementById('gpsAccuracy').innerText = label;
       updateRouteLink(lat, lng);
     }
 
     function updateRouteLink(lat, lng) {
       const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-      document.getElementById('googleMapsRouteLink').href = url;
+      document.getElementById('riderNavBtn').href = url;
     }
 
-    // 1-Tap Browser Geolocation
     function acquireExactGPS() {
       const btn = document.getElementById('btnGetGPS');
       if (!navigator.geolocation) {
-        alert("La géolocalisation n'est pas supportée par votre navigateur.");
+        alert("La géolocalisation n'est pas supportée par votre appareil.");
         return;
       }
       btn.innerText = "Recherche satellite en cours...";
 
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          const acc = Math.round(position.coords.accuracy);
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const acc = Math.round(pos.coords.accuracy);
 
           map.setView([lat, lng], 16);
           marker.setLatLng([lat, lng]);
-          updateCoords(lat, lng, `Précision: ±${acc}m`);
+          updateCoords(lat, lng, `Fixé (±${acc}m)`);
           btn.innerHTML = `<i class="fa-solid fa-check text-emerald-600"></i> <span>Position capturée (±${acc}m)</span>`;
         },
-        (error) => {
-          alert("Impossible d'obtenir la position GPS. Vous pouvez déplacer le marqueur sur la carte.");
+        () => {
+          alert("Impossible d'obtenir la position. Vous pouvez déplacer le marqueur sur la carte.");
           btn.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> <span>Réessayer le GPS</span>`;
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     }
 
-    window.addEventListener('load', initMap);
+    function selectOperator(op) {
+      const mtnBtn = document.getElementById('btnOperatorMTN');
+      const oraBtn = document.getElementById('btnOperatorOrange');
+      if (op === 'MTN') {
+        mtnBtn.className = "border-2 border-yellow-400 bg-yellow-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
+        oraBtn.className = "border-2 border-slate-200 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
+      } else {
+        oraBtn.className = "border-2 border-orange-500 bg-orange-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
+        mtnBtn.className = "border-2 border-slate-200 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
+      }
+    }
+
+    // Load Order from ?code=...
+    async function loadOrder() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get('code') || 'BS-DLA-80398';
+
+      try {
+        const res = await fetch(`/api/orders/${code}`);
+        const data = await res.json();
+        if (data.success && data.order) {
+          currentOrder = data.order;
+          renderOrder(data.order);
+        }
+      } catch (err) {
+        console.error("Erreur de chargement:", err);
+      }
+    }
+
+    function renderOrder(order) {
+      document.getElementById('orderCodeDisplay').innerText = order.trackingCode;
+      document.getElementById('itemTitleDisplay').innerText = order.itemTitle;
+      document.getElementById('merchantNameDisplay').innerText = order.merchantName;
+      document.getElementById('itemPriceDisplay').innerText = order.itemPrice.toLocaleString() + " FCFA";
+      document.getElementById('deliveryFeeDisplay').innerText = order.deliveryFee.toLocaleString() + " FCFA";
+      document.getElementById('totalAmountDisplay').innerText = order.totalAmount.toLocaleString() + " FCFA";
+
+      if (order.status === 'SEARCHING_RIDER' || order.status === 'ASSIGNED' || order.status === 'IN_TRANSIT') {
+        document.getElementById('paymentSelectionSection').classList.add('hidden');
+        document.getElementById('escrowLockedSection').classList.remove('hidden');
+        document.getElementById('orderStatusBadge').className = "bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2.5 py-0.5 rounded-full";
+        document.getElementById('orderStatusBadge').innerText = "Séquestre Verrouillé";
+        if (order.rawReleaseCodeForTesting) {
+          document.getElementById('releaseCodeDisplay').innerText = order.rawReleaseCodeForTesting;
+        }
+      }
+    }
+
+    async function triggerPayment() {
+      if (!currentOrder) return;
+      const btn = document.getElementById('btnPay');
+      btn.disabled = true;
+      btn.innerText = "Simulation de validation USSD...";
+
+      try {
+        const res = await fetch(`/api/orders/${currentOrder.trackingCode}/simulate-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ buyerPhone: '+237699887766' })
+        });
+        const data = await res.json();
+        if (data.success) {
+          currentOrder = data.order;
+          document.getElementById('releaseCodeDisplay').innerText = data.secretReleaseCodeForBuyer;
+          renderOrder(data.order);
+        }
+      } catch (err) {
+        alert("Erreur réseau");
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "Bloquer les Fonds en Séquestre";
+      }
+    }
+
+    window.addEventListener('load', () => {
+      initMap();
+      loadOrder();
+    });
   </script>
 </body>
 </html>

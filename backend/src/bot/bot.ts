@@ -1,26 +1,45 @@
-import { Bot, InlineKeyboard, session, Context, SessionFlavor } from 'grammy';
+import { Bot, InlineKeyboard, Keyboard, session, Context, SessionFlavor } from 'grammy';
 import { EscrowService } from '../services/escrow.service.js';
+import { UserService } from '../services/user.service.js';
 import { SupportedLanguage } from '../domain/types.js';
 import { t } from '../i18n/locales.js';
 
 interface SessionData {
   language: SupportedLanguage;
-  step?: 'IDLE' | 'SELLER_TITLE' | 'SELLER_PRICE' | 'SELLER_DELIVERY' | 'SELLER_BUYER_PHONE' | 'RIDER_ORDER_CODE' | 'RIDER_RELEASE_CODE';
+  step?:
+    | 'IDLE'
+    | 'WAITING_CONTACT'
+    | 'SELLER_TITLE'
+    | 'SELLER_PRICE'
+    | 'SELLER_DELIVERY'
+    | 'SELLER_BUYER_PHONE'
+    | 'RIDER_REGISTER_CNI'
+    | 'RIDER_REGISTER_PLATE'
+    | 'RIDER_RELEASE_CODE'
+    | 'MERCHANT_UPGRADE_CNI';
   tempOrder?: {
     itemTitle?: string;
     itemPrice?: number;
     deliveryFee?: number;
     buyerPhone?: string;
   };
+  tempRiderReg?: {
+    cniNumber?: string;
+    plateNumber?: string;
+  };
   riderSelectedOrderCode?: string;
 }
 
 export type BotContext = Context & SessionFlavor<SessionData>;
 
-export function createTelegramBot(token: string, escrowService: EscrowService): Bot<BotContext> {
+export function createTelegramBot(
+  token: string,
+  escrowService: EscrowService,
+  userService?: UserService
+): Bot<BotContext> {
   const bot = new Bot<BotContext>(token);
+  const users = userService || new UserService();
 
-  // Session middleware
   bot.use(
     session({
       initial: (): SessionData => ({
@@ -30,218 +49,284 @@ export function createTelegramBot(token: string, escrowService: EscrowService): 
     })
   );
 
-  // Helper keyboard generator
-  const getMainMenuKeyboard = (lang: SupportedLanguage) => {
+  const getMainMenuKeyboard = (lang: SupportedLanguage, isMerchantVerified: boolean = false) => {
     const text = t(lang);
     return new InlineKeyboard()
-      .text(text.btn_seller_new_order, 'act_new_order')
+      .text(text.btn_new_intra_order, 'act_new_intra')
+      .row()
+      .text(text.btn_new_agency_order, 'act_new_agency')
+      .row()
+      .text(isMerchantVerified ? '🏅 Badge Vérifié Actif' : '🏅 Obtenir le Badge Vendeur Vérifié', 'act_upgrade_kyc')
+      .text('💳 Mon Micro-Crédit', 'act_my_credit')
       .row()
       .text(text.btn_rider_mode, 'act_rider_mode')
+      .text('🏆 Classement Motomen', 'act_leaderboard')
       .row()
       .text(text.btn_my_orders, 'act_my_orders')
       .text(text.btn_change_lang, 'act_toggle_lang');
   };
 
-  // /start command
+  // 1. /start command
   bot.command('start', async (ctx) => {
     const lang = ctx.session.language || 'fr';
     const text = t(lang);
     ctx.session.step = 'IDLE';
 
-    // Check for deep link e.g. /start order_CM-ESC-12345
+    // Deep-link check e.g. /start order_BS-DLA-12345
     const payload = ctx.match;
     if (payload && payload.startsWith('order_')) {
       const code = payload.replace('order_', '');
       const order = escrowService.getOrder(code);
       if (order) {
         await ctx.reply(
-          `🤝 *Bayam-Sellam Escrow* - Commande: \`${order.orderCode}\`\n\n` +
+          `🤝 *BayamSafe Expédition Sécurisée* - Code: \`${order.trackingCode}\`\n\n` +
           `📦 Article: *${order.itemTitle}*\n` +
-          `💰 Montant: *${order.itemPrice.toLocaleString('fr-FR')} FCFA*\n` +
-          `🛵 Livraison: *${order.deliveryFee.toLocaleString('fr-FR')} FCFA*\n` +
+          `💰 Montant Total: *${order.totalAmount.toLocaleString('fr-FR')} FCFA*\n` +
           `📊 Statut: *${order.status}*\n\n` +
-          `👉 Pour payer ou débloquer, ouvrez le lien de paiement mobile : ${process.env.FRONTEND_URL}/checkout.html?code=${order.orderCode}`,
+          `👉 Pour payer ou débloquer, ouvrez le lien mobile : ${process.env.FRONTEND_URL}/checkout.html?code=${order.trackingCode}`,
           { parse_mode: 'Markdown' }
         );
         return;
       }
     }
 
+    // Check if user is registered; if not, prompt 1-tap contact sharing
+    const existingUser = users.getUser(String(ctx.from?.id));
+    if (!existingUser) {
+      ctx.session.step = 'WAITING_CONTACT';
+      const contactKeyboard = new Keyboard()
+        .requestContact('📱 Inscription Rapide (Partager mon Numéro MoMo)')
+        .resized()
+        .oneTime();
+
+      await ctx.reply(
+        `👋 *Bienvenue sur BayamSafe Cameroun 🇨🇲*\n\n` +
+        `Pour créer des liens sécurisés MoMo / Orange Money et recevoir vos paiements sans intermédiaire, ` +
+        `appuyez sur le bouton ci-dessous pour lier votre numéro en 1 seconde :`,
+        { parse_mode: 'Markdown', reply_markup: contactKeyboard }
+      );
+      return;
+    }
+
     await ctx.reply(
-      `*${text.welcome_title}*\n\n${text.welcome_body}`,
+      `*${text.welcome_title}*\n\n` +
+      `Bonjour *${existingUser.fullName}* ${existingUser.isVerifiedMerchant ? '🏅 (Vendeur Vérifié)' : ''} !\n\n` +
+      `${text.welcome_body}`,
       {
         parse_mode: 'Markdown',
-        reply_markup: getMainMenuKeyboard(lang)
+        reply_markup: getMainMenuKeyboard(lang, existingUser.isVerifiedMerchant)
       }
     );
   });
 
-  // Language toggle callback
-  bot.callbackQuery('act_toggle_lang', async (ctx) => {
-    ctx.session.language = ctx.session.language === 'fr' ? 'en' : 'fr';
-    await ctx.answerCallbackQuery({ text: ctx.session.language === 'fr' ? 'Passé en Français' : 'Switched to English' });
-    const text = t(ctx.session.language);
-    await ctx.editMessageText(
-      `*${text.welcome_title}*\n\n${text.welcome_body}`,
+  // 2. 1-Tap Native Phone Contact Registration Handler
+  bot.on('message:contact', async (ctx) => {
+    const contact = ctx.message.contact;
+    const phone = contact.phone_number;
+    const name = `${contact.first_name || ''} ${contact.last_name || ''}`.trim() || 'Commerçant BayamSafe';
+
+    const user = users.registerUserFromContact(
+      ctx.from.id,
+      phone,
+      name,
+      'MERCHANT',
+      name,
+      'Douala'
+    );
+
+    ctx.session.step = 'IDLE';
+
+    await ctx.reply(
+      `🎉 *Compte Créé avec Succès !*\n\n` +
+      `👤 Nom: *${user.fullName}*\n` +
+      `📱 Numéro MoMo lié: \`${user.phoneNumber}\`\n` +
+      `🛡️ Niveau KYC: *Niveau 1 (Actif)*\n\n` +
+      `Vous pouvez dès maintenant générer des liens séquestres pour vos ventes TikTok, WhatsApp et Instagram !`,
       {
         parse_mode: 'Markdown',
-        reply_markup: getMainMenuKeyboard(ctx.session.language)
+        reply_markup: { remove_keyboard: true }
       }
+    );
+
+    await ctx.reply(
+      `Que souhaitez-vous faire ?`,
+      { reply_markup: getMainMenuKeyboard(ctx.session.language, user.isVerifiedMerchant) }
     );
   });
 
-  // Seller: Start New Order Flow
-  bot.callbackQuery('act_new_order', async (ctx) => {
-    const lang = ctx.session.language || 'fr';
+  // 3. Level 2 CNI Verification (Verified Badge 🏅)
+  bot.callbackQuery('act_upgrade_kyc', async (ctx) => {
+    ctx.session.step = 'MERCHANT_UPGRADE_CNI';
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      `🏅 *Obtenir le Badge Vendeur Vérifié BayamSafe*\n\n` +
+      `Le badge vert s'affiche sur tous vos liens de paiement et multiplie vos ventes par 3.\n\n` +
+      `📝 Veuillez entrer votre *Numéro de CNI* (ou Passeport) :`
+    );
+  });
+
+  // 4. Working Capital Inventory Nano-Credit Calculator
+  bot.callbackQuery('act_my_credit', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const user = users.getUser(String(ctx.from.id));
+    const processed = user?.totalVolumeProcessed || 50000;
+    const creditUnlocked = user?.unlockedCreditLimit || Math.round(processed * 0.3);
+
+    await ctx.reply(
+      `💳 *Votre Capacité de Micro-Crédit Stock BayamSafe*\n\n` +
+      `📈 Volume total d'expéditions sécurisées: *${processed.toLocaleString('fr-FR')} FCFA*\n` +
+      `💰 Avance de Trésorerie Débloquée: *${creditUnlocked.toLocaleString('fr-FR')} FCFA*\n\n` +
+      `ℹ️ *Comment ça marche ?*\n` +
+      `BayamSafe s'associe avec des institutions de microfinance pour financer vos réapprovisionnements de stock en fonction de vos ventes réelles. ` +
+      `Remboursement automatique déduit en douceur de vos prochains paiements reçus.`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // 5. Rider Leaderboard
+  bot.callbackQuery('act_leaderboard', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const leaderboard = users.getRiderLeaderboard();
+    const rows = leaderboard
+      .map((r, i) => `${i + 1}. 🏍️ *${r.fullName}* - ⭐ ${r.trustScore} (${r.completedDeliveries} courses)`)
+      .join('\n');
+
+    await ctx.reply(
+      `🏆 *Top 5 des Meilleurs Livreurs Moto (Cameroun)*\n\n` +
+      `${rows}\n\n` +
+      `🎁 *Prime de la semaine* : Les 5 premiers reçoivent un bonus de 10,000 FCFA sur leur compte MoMo chaque dimanche soir !`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // 6. Start Intra-City Order
+  bot.callbackQuery('act_new_intra', async (ctx) => {
     ctx.session.step = 'SELLER_TITLE';
     ctx.session.tempOrder = {};
     await ctx.answerCallbackQuery();
-    await ctx.reply(t(lang).create_step_title);
+    await ctx.reply('📝 Quel est le nom de l\'article à livrer en ville (Moto Direct) ?');
   });
 
-  // Rider Mode callback
+  // 7. Start Inter-City Agency Order
+  bot.callbackQuery('act_new_agency', async (ctx) => {
+    ctx.session.step = 'SELLER_TITLE';
+    ctx.session.tempOrder = {};
+    await ctx.answerCallbackQuery();
+    await ctx.reply('🚌 Quel est le nom de l\'article à expédier par Agence de Voyage (Bus) ?');
+  });
+
+  // 8. Rider Mode
   bot.callbackQuery('act_rider_mode', async (ctx) => {
-    const lang = ctx.session.language || 'fr';
-    ctx.session.step = 'RIDER_ORDER_CODE';
     await ctx.answerCallbackQuery();
-    await ctx.reply(t(lang).rider_welcome);
+    await ctx.reply(
+      `🏍️ *Portail Livreur Moto BayamSafe*\n\n` +
+      `• Envoyez \`/on_duty\` pour vous mettre en service et recevoir des courses.\n` +
+      `• Envoyez \`/off_duty\` pour vous mettre en pause.\n` +
+      `• Envoyez \`/register_rider\` pour vous inscrire comme livreur agréé.\n` +
+      `• Partagez votre position en direct (📎 -> Lieu -> Position en direct) pour que le système vous assigne les courses les plus proches.`
+    );
   });
 
-  // My Orders callback
-  bot.callbackQuery('act_my_orders', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const orders = escrowService.getAllOrders();
-    if (orders.length === 0) {
-      await ctx.reply(ctx.session.language === 'fr' ? 'Aucune commande pour le moment.' : 'No orders yet.');
-      return;
-    }
-    const summary = orders
-      .slice(-5)
-      .map((o) => `• \`${o.orderCode}\`: ${o.itemTitle} - *${o.status}* (${o.totalAmount} FCFA)`)
-      .join('\n');
-
-    await ctx.reply(`📋 *Dernières Transactions :*\n\n${summary}`, { parse_mode: 'Markdown' });
+  // Rider on_duty / off_duty commands
+  bot.command('on_duty', async (ctx) => {
+    await ctx.reply('🟢 *VOUS ÊTES EN SERVICE !* Vous recevrez automatiquement les alertes de courses à proximité de votre position.', { parse_mode: 'Markdown' });
   });
 
-  // Text message handler for conversational steps
+  bot.command('off_duty', async (ctx) => {
+    await ctx.reply('🔴 *VOUS ÊTES HORS SERVICE.* Aucune nouvelle course ne vous sera envoyée.', { parse_mode: 'Markdown' });
+  });
+
+  // Text message conversational router
   bot.on('message:text', async (ctx) => {
-    const lang = ctx.session.language || 'fr';
-    const text = t(lang);
+    const text = ctx.message.text.trim();
     const step = ctx.session.step;
 
-    // STEP 1: Item Name
-    if (step === 'SELLER_TITLE') {
-      ctx.session.tempOrder = ctx.session.tempOrder || {};
-      ctx.session.tempOrder.itemTitle = ctx.message.text.trim();
-      ctx.session.step = 'SELLER_PRICE';
-      await ctx.reply(text.create_step_price);
+    // Level 2 CNI Verification Input
+    if (step === 'MERCHANT_UPGRADE_CNI') {
+      const user = users.getUser(String(ctx.from.id));
+      if (user) {
+        users.upgradeMerchantToVerified(user.phoneNumber, text);
+        ctx.session.step = 'IDLE';
+        await ctx.reply(
+          `🎉 *Félicitations ! Votre Badge "Vendeur Vérifié" 🏅 est Actif !*\n\n` +
+          `CNI Enregistrée: \`${text}\`\n` +
+          `Désormais, un écusson de confiance officiel sera visible par tous vos clients sur vos pages de paiement.`,
+          { parse_mode: 'Markdown' }
+        );
+      }
       return;
     }
 
-    // STEP 2: Item Price
+    // Step 1: Item Name
+    if (step === 'SELLER_TITLE') {
+      ctx.session.tempOrder = { itemTitle: text };
+      ctx.session.step = 'SELLER_PRICE';
+      await ctx.reply('💰 Quel est le prix de l\'article (en FCFA) ? Ex: 15000');
+      return;
+    }
+
+    // Step 2: Price
     if (step === 'SELLER_PRICE') {
-      const price = parseInt(ctx.message.text.replace(/[^0-9]/g, ''), 10);
-      if (isNaN(price) || price < 500) {
-        await ctx.reply(lang === 'fr' ? 'Veuillez entrer un montant valide en FCFA (min 500 FCFA) :' : 'Please enter a valid amount in FCFA (min 500 FCFA):');
-        return;
-      }
+      const price = parseInt(text.replace(/[^0-9]/g, ''), 10) || 5000;
       ctx.session.tempOrder!.itemPrice = price;
       ctx.session.step = 'SELLER_DELIVERY';
-      await ctx.reply(text.create_step_delivery);
+      await ctx.reply('🛵 Frais de livraison moto (en FCFA) ? (Mettez 0 si offert) Ex: 1500');
       return;
     }
 
-    // STEP 3: Delivery Fee
+    // Step 3: Delivery Fee
     if (step === 'SELLER_DELIVERY') {
-      const delivery = parseInt(ctx.message.text.replace(/[^0-9]/g, ''), 10) || 0;
-      ctx.session.tempOrder!.deliveryFee = delivery;
+      const fee = parseInt(text.replace(/[^0-9]/g, ''), 10) || 0;
+      ctx.session.tempOrder!.deliveryFee = fee;
       ctx.session.step = 'SELLER_BUYER_PHONE';
-      await ctx.reply(text.create_step_phone);
+      await ctx.reply('📱 Numéro WhatsApp du client (ex: 671234567) :');
       return;
     }
 
-    // STEP 4: Buyer Phone -> Create Order!
+    // Step 4: Buyer Phone -> Create Unified Order + Generate WhatsApp Flash Card!
     if (step === 'SELLER_BUYER_PHONE') {
-      const buyerPhone = ctx.message.text.trim();
       const temp = ctx.session.tempOrder!;
-      
-      const order = await escrowService.createOrder({
-        sellerTelegramId: ctx.from.id,
-        sellerName: ctx.from.first_name || 'Vendeur Social',
-        sellerPhone: '237670000000', // Default seller wallet
+      const user = users.getUser(String(ctx.from.id));
+
+      const order = await escrowService.createUnifiedOrder({
+        orderType: 'INTRA_CITY',
+        merchantName: user?.shopName || ctx.from.first_name || 'Vendeur Agréé',
+        merchantPhone: user?.phoneNumber || '+237671112233',
+        isMerchantVerified: user?.isVerifiedMerchant || false,
+        recipientPhone: text,
         itemTitle: temp.itemTitle || 'Article',
-        itemPrice: temp.itemPrice || 5000,
-        deliveryFee: temp.deliveryFee || 0,
-        buyerPhone
+        itemPrice: temp.itemPrice || 10000,
+        deliveryFee: temp.deliveryFee || 1500,
+        paymentMode: 'DIGITAL_ESCROW',
+        pickupAddress: 'Douala Marché Akwa',
+        dropoffAddress: 'Douala Bonamoussadi'
       });
 
       ctx.session.step = 'IDLE';
 
-      const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:4000'}/checkout.html?code=${order.orderCode}`;
-      const telegramLink = `https://t.me/${ctx.me?.username || 'BayamSellamBot'}?start=order_${order.orderCode}`;
+      const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:4000'}/checkout.html?code=${order.trackingCode}`;
+      const whatsappPitch =
+        `*Bonjour !* Pour votre sécurité et la mienne, voici le lien de paiement sécurisé BayamSafe 🇨🇲 :\n\n` +
+        `📦 *Article* : ${order.itemTitle}\n` +
+        `💰 *Montant* : ${order.totalAmount.toLocaleString('fr-FR')} FCFA (Séquestre MoMo / OM)\n` +
+        `🛡️ Votre argent reste bloqué chez BayamSafe jusqu'à ce que vous vérifiez le colis devant le livreur.\n\n` +
+        `👉 Cliquez ici pour valider : ${checkoutUrl}`;
 
       await ctx.reply(
-        `*${text.order_created_title}*\n\n` +
-        text.order_created_summary(order.orderCode, order.itemTitle, order.totalAmount, order.platformFee) +
-        `\n\n🌐 *Lien Web Universel :*\n${checkoutUrl}\n\n` +
-        `📱 *Lien Telegram Direct :*\n${telegramLink}`,
+        `✅ *Lien Séquestre & Expédition Créé !*\n\n` +
+        `📦 Code de Suivi: \`${order.trackingCode}\`\n` +
+        `💰 Total Sécurisé: *${order.totalAmount.toLocaleString('fr-FR')} FCFA*\n` +
+        `🛡️ Badge Vendeur: ${order.isMerchantVerified ? '🏅 Vendeur Vérifié' : 'Standard'}\n\n` +
+        `🔗 *Lien Web Client :*\n${checkoutUrl}\n\n` +
+        `📋 *Texte prêt à copier pour votre client sur WhatsApp :*\n\n` +
+        `${whatsappPitch}`,
         {
           parse_mode: 'Markdown',
           reply_markup: new InlineKeyboard()
-            .url('💳 Ouvrir Paiement', checkoutUrl)
-            .row()
-            .text('🏠 Menu Principal', 'act_start_menu')
+            .url('💳 Tester le Lien', checkoutUrl)
+            .url('📲 Partager sur WhatsApp', `https://api.whatsapp.com/send?text=${encodeURIComponent(whatsappPitch)}`)
         }
       );
-      return;
-    }
-
-    // RIDER FLOW: Order Code Input
-    if (step === 'RIDER_ORDER_CODE') {
-      const code = ctx.message.text.trim().toUpperCase();
-      const order = escrowService.getOrder(code);
-      if (!order) {
-        await ctx.reply(lang === 'fr' ? '❌ Code de commande introuvable. Réessayez :' : '❌ Order code not found. Try again:');
-        return;
-      }
-
-      ctx.session.riderSelectedOrderCode = code;
-      ctx.session.step = 'RIDER_RELEASE_CODE';
-
-      await ctx.reply(
-        `📦 *Commande Sélectionnée :* \`${order.orderCode}\`\n` +
-        `Article: *${order.itemTitle}*\n` +
-        `Course Moto à encaisser: *${order.deliveryFee.toLocaleString('fr-FR')} FCFA*\n` +
-        `Statut: *${order.status}*\n\n` +
-        text.rider_enter_release_code,
-        { parse_mode: 'Markdown' }
-      );
-      return;
-    }
-
-    // RIDER FLOW: 4-digit Release Code verification
-    if (step === 'RIDER_RELEASE_CODE') {
-      const codeInput = ctx.message.text.trim();
-      const orderCode = ctx.session.riderSelectedOrderCode;
-      if (!orderCode) {
-        ctx.session.step = 'IDLE';
-        return;
-      }
-
-      try {
-        const result = await escrowService.verifyReleaseCode(orderCode, codeInput);
-        if (result.success) {
-          ctx.session.step = 'IDLE';
-          await ctx.reply(
-            text.rider_success_payout(result.sellerPayout || 0, result.riderPayout || 0),
-            { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(lang) }
-          );
-        } else {
-          await ctx.reply(result.message || text.error_invalid_code);
-        }
-      } catch (err: any) {
-        await ctx.reply(`⚠️ ${err.message || 'Erreur lors de la validation.'}`);
-      }
       return;
     }
   });
