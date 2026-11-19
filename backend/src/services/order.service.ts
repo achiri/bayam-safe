@@ -1,12 +1,12 @@
 import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError, conflict, forbidden, invalid, notFound } from '../domain/errors.js';
-import { assertGeoPoint } from '../domain/geo.js';
+import { assertGeoPoint, haversineKm } from '../domain/geo.js';
 import { computePricing, refundPlan, settlementPlan, PayoutPlanLine } from '../domain/money.js';
 import { DISPUTABLE_STATUSES, TERMINAL_STATUSES, deliverableStatus, transition } from '../domain/order-state.js';
 import { detectOperator, normalizeCameroonPhone, normalizeContactPhone } from '../domain/phone.js';
 import { Secrets, newId, newReleaseCode, newTrackingCode, safeEqual } from '../domain/secrets.js';
 import {
-  Dispute, GeoPoint, LedgerAccount, Operator, Order, OrderStatus, OrderType, PaymentMode, Payout, PayoutKind, Rider, User
+  Dispute, GeoPoint, Lang, LedgerAccount, Operator, Order, OrderStatus, OrderType, PaymentMode, Payout, PayoutKind, Rider, User
 } from '../domain/types.js';
 import { PaymentGateway, Transaction } from '../payments/gateway.js';
 import { Repo, Store } from '../storage/store.js';
@@ -34,6 +34,8 @@ export interface CreateOrderInput {
   pickupLocation?: GeoPoint;
   originAgencyId?: string;
   destinationCity?: string;
+  /** The seller's own rider, by the number on their badge (BSR-XXXX). */
+  preferredRiderCode?: string;
 }
 
 export interface DeliveryDetailsPatch {
@@ -70,11 +72,20 @@ export interface BuyerView {
   /** True when the order is paid but this device is not the one that paid. */
   releaseCodeOnOtherDevice: boolean;
   /** The rider currently carrying the parcel, so the buyer knows who will knock. */
-  rider?: { firstName: string; plateNumber: string; riderCode: string; vehicleType: string; hasPhoto: boolean };
+  rider?: { firstName: string; plateNumber: string; riderCode: string; vehicleType: string; hasPhoto: boolean; phone: string };
+  /** Live position of the rider while the parcel is on its way to the buyer. */
+  tracking?: { lat: number; lng: number; at: string; distanceKm?: number; etaMin?: number; near: boolean };
+  /** Whether a Telegram account follows this order. */
+  followingOnTelegram: boolean;
   dispute?: Pick<Dispute, 'reason' | 'openedAt' | 'resolution'>;
 }
 
 const MAX_PAYOUT_ATTEMPTS = 5;
+const FOLLOW_TOKEN_TTL_MS = 30 * 60 * 1000;
+const NEAR_KM = 0.4;
+const TRACKING_FRESH_MS = 15 * 60 * 1000;
+/** Statuses in which the parcel is travelling towards the buyer. */
+const HEADING_TO_BUYER: OrderStatus[] = ['IN_TRANSIT', 'OUT_FOR_DELIVERY'];
 const PAYMENT_PENDING_WINDOW_MS = 2 * 60 * 1000;
 const PAYMENT_POLL_INTERVAL_MS = 5 * 1000;
 const SENDING_STUCK_MS = 10 * 60 * 1000;
@@ -160,6 +171,7 @@ export class OrderService {
     }
 
     const pricing = computePricing(input.itemPrice, input.deliveryFee, agencyFee, this.settings.commissionPct);
+    const preferredRiderId = input.preferredRiderCode ? (await this.requireBookableRider(input.preferredRiderCode)).id : undefined;
     const now = new Date();
     const buyerToken = Secrets.token();
     const isCod = input.paymentMode === 'COD';
@@ -185,6 +197,7 @@ export class OrderService {
       destinationCity,
       itemTitle: text(input.itemTitle, 'Item title', 2, 120),
       codReserved: 0,
+      preferredRiderId,
       buyerTokenHash: this.secrets.hashToken(buyerToken),
       releaseCodeEnc: this.secrets.encrypt(newReleaseCode()),
       codeAttempts: 0,
@@ -237,9 +250,28 @@ export class OrderService {
     const v = this.toBuyerView(o, sessionToken);
     const r = await this.activeRider(o);
     if (r) {
-      v.rider = { firstName: r.fullName.split(' ')[0], plateNumber: r.plateNumber, riderCode: r.riderCode, vehicleType: r.vehicleType, hasPhoto: !!r.selfieFileId };
+      v.rider = { firstName: r.fullName.split(' ')[0], plateNumber: r.plateNumber, riderCode: r.riderCode, vehicleType: r.vehicleType, hasPhoto: !!r.selfieFileId, phone: r.phone };
+      v.tracking = this.trackingFor(o, r);
     }
     return v;
+  }
+
+  /**
+   * Rider position for the buyer, only while the parcel is heading to them and the rider's
+   * live location is recent. Distance and a rough moto ETA (~20 km/h in city traffic).
+   */
+  trackingFor(o: Order, r: Rider): BuyerView['tracking'] {
+    if (!HEADING_TO_BUYER.includes(o.status) || !r.location || !r.locationUpdatedAt) return undefined;
+    if (Date.now() - Date.parse(r.locationUpdatedAt) > TRACKING_FRESH_MS) return undefined;
+    const distanceKm = o.dropoffLocation ? Math.round(haversineKm(r.location, o.dropoffLocation) * 10) / 10 : undefined;
+    return {
+      lat: r.location.lat,
+      lng: r.location.lng,
+      at: r.locationUpdatedAt,
+      distanceKm,
+      etaMin: distanceKm === undefined ? undefined : Math.max(1, Math.round((distanceKm / 20) * 60)),
+      near: distanceKm !== undefined && distanceKm <= NEAR_KM
+    };
   }
 
   /** Buyer-authenticated access to the active rider's selfie file id. */
@@ -286,6 +318,7 @@ export class OrderService {
       },
       releaseCode: showCode ? this.secrets.decrypt(o.releaseCodeEnc) : undefined,
       releaseCodeOnOtherDevice: active && o.paymentMode === 'ESCROW' && paid && !sessionOk,
+      followingOnTelegram: !!o.buyerTelegramId,
       dispute: o.dispute && { reason: o.dispute.reason, openedAt: o.dispute.openedAt, resolution: o.dispute.resolution }
     };
   }
@@ -326,7 +359,7 @@ export class OrderService {
    * Sends a USSD payment prompt to the payer's phone. Returns a fresh device session token:
    * the device holding it is the only one that will be shown the release code once paid.
    */
-  async initiatePayment(orderId: string, buyerToken: string | undefined, payerPhoneInput: string) {
+  async initiatePayment(orderId: string, buyerToken: string | undefined, payerPhoneInput: string, existingSession?: string) {
     let o = await this.requireBuyer(orderId, buyerToken);
     if (o.paymentMode !== 'ESCROW') throw invalid('This order is paid in cash on delivery.');
     if (o.status !== 'PENDING_PAYMENT') throw conflict('This order is already paid or closed.');
@@ -349,7 +382,8 @@ export class OrderService {
       description: `BayamSafe ${o.trackingCode}`,
       externalReference: `order:${o.id}`
     });
-    const sessionToken = Secrets.token();
+    // Keep this device's existing session (e.g. from "follow on Telegram") so the code follows it.
+    const sessionToken = existingSession && /^[A-Za-z0-9_-]{20,64}$/.test(existingSession) ? existingSession : Secrets.token();
     const now = new Date().toISOString();
     await this.mutate(orderId, (ord) => {
       if (ord.status !== 'PENDING_PAYMENT') throw conflict('This order is already paid or closed.');
@@ -440,9 +474,103 @@ export class OrderService {
     return this.view(order);
   }
 
+  // ------------------------------------------------------------------ seller's own rider
+
+  private async requireBookableRider(code: string): Promise<Rider> {
+    const r = await this.store.getRiderByCode(code.trim().toUpperCase());
+    if (!r) throw new AppError('RIDER_UNKNOWN', 'Aucun livreur BayamSafe avec ce numéro. Demandez-lui le numéro BSR-XXXX affiché dans son espace livreur.', 404);
+    if (r.status !== 'APPROVED') throw new AppError('RIDER_NOT_APPROVED', 'Ce livreur n’est pas encore vérifié par BayamSafe.', 409);
+    return r;
+  }
+
+  /** Seller assigns their own rider (code) or opens the job to everyone (null), before pickup. */
+  async setPreferredRider(orderId: string, merchantId: string, code: string | null): Promise<{ order: Order; rider?: Rider }> {
+    const rider = code ? await this.requireBookableRider(code) : undefined;
+    const { order } = await this.mutate(orderId, (o) => {
+      if (o.merchantId !== merchantId) throw forbidden();
+      if (!['PENDING_PAYMENT', 'AWAITING_RIDER'].includes(o.status)) throw conflict('Un livreur a déjà accepté cette course.');
+      o.preferredRiderId = rider?.id;
+      o.updatedAt = new Date().toISOString();
+    });
+    if (order.status === 'AWAITING_RIDER') await this.offerToRiders(order, 'FIRST');
+    return { order, rider };
+  }
+
+  // ------------------------------------------------------------------ buyer on Telegram
+
+  /**
+   * Creates a one-time deep-link payload for the bot (/start f_<order>_<token>). The device
+   * session is remembered, so the release code is only sent if this device is the one that pays.
+   */
+  async createFollowLink(orderId: string, buyerToken: string | undefined, sessionToken?: string) {
+    await this.requireBuyer(orderId, buyerToken);
+    const session = sessionToken && /^[A-Za-z0-9_-]{20,64}$/.test(sessionToken) ? sessionToken : Secrets.token();
+    const token = Secrets.token(16);
+    await this.mutate(orderId, (o) => {
+      o.followTokenHash = this.secrets.hashToken(token);
+      o.followTokenExpiresAt = new Date(Date.now() + FOLLOW_TOKEN_TTL_MS).toISOString();
+      o.followSessionHash = this.secrets.hashToken(session);
+    });
+    return { payload: `f_${orderId.replace(/-/g, '')}_${token}`, sessionToken: session };
+  }
+
+  /** Called by the bot on /start f_...: binds the buyer's Telegram to the order. */
+  async linkBuyerTelegram(payload: string, telegramId: number, lang: Lang): Promise<Order> {
+    const m = payload.match(/^f_([0-9a-f]{32})_([A-Za-z0-9_-]{16,40})$/);
+    if (!m) throw new AppError('LINK_INVALID', 'Lien de suivi invalide.', 400);
+    const id = m[1].replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+    const { order } = await this.mutate(id, (o) => {
+      const fresh = !!o.followTokenExpiresAt && o.followTokenExpiresAt > new Date().toISOString();
+      if (!fresh || !this.secrets.verifyToken(m[2], o.followTokenHash)) {
+        throw new AppError('LINK_EXPIRED', 'Ce lien de suivi a expiré. Ouvrez à nouveau la page de paiement et appuyez sur « Suivre sur Telegram ».', 410);
+      }
+      o.buyerTelegramId = telegramId;
+      o.buyerLang = lang;
+      o.followTokenHash = undefined; // one-time
+      o.followTokenExpiresAt = undefined;
+    });
+    this.events.emit({ type: 'order.buyer_linked', order });
+    return order;
+  }
+
+  /**
+   * The release code for the buyer's Telegram: for cash orders always (anyone with the link sees it),
+   * for escrow only once paid and only if Telegram was linked from the device that paid.
+   */
+  releaseCodeForTelegram(o: Order): string | undefined {
+    const active = !TERMINAL_STATUSES.includes(o.status) && o.status !== 'DELIVERED';
+    if (!active || !o.buyerTelegramId) return undefined;
+    if (o.paymentMode === 'COD') return this.secrets.decrypt(o.releaseCodeEnc);
+    const paidOnThisDevice = !!o.payment.confirmedAt && !!o.buyerSessionHash && o.buyerSessionHash === o.followSessionHash;
+    return paidOnThisDevice ? this.secrets.decrypt(o.releaseCodeEnc) : undefined;
+  }
+
+  /** Tells the buyer once when the delivering rider gets close to the drop-off pin. */
+  async onRiderMoved(rider: Rider): Promise<void> {
+    if (!rider.location) return;
+    const active = await this.store.listOrders({ riderId: rider.id, statuses: HEADING_TO_BUYER, limit: 20 });
+    for (const o of active) {
+      const delivering = o.type === 'INTER_CITY' ? o.lastMileRiderId : o.firstMileRiderId;
+      if (delivering !== rider.id || !o.dropoffLocation || o.riderNearNotifiedAt) continue;
+      const d = haversineKm(rider.location, o.dropoffLocation);
+      if (d > NEAR_KM) continue;
+      const updated = await this.mutate(o.id, (ord) => {
+        if (ord.riderNearNotifiedAt) throw conflict('already notified');
+        ord.riderNearNotifiedAt = new Date().toISOString();
+      }).catch(() => undefined);
+      if (updated) this.events.emit({ type: 'order.rider_near', order: updated.order, rider, distanceKm: Math.round(d * 100) / 100 });
+    }
+  }
+
   // ------------------------------------------------------------------ riders
 
   async offerToRiders(order: Order, leg: 'FIRST' | 'LAST'): Promise<void> {
+    if (leg === 'FIRST' && order.preferredRiderId) {
+      // The seller brought their own rider: only they get the job, wherever they are.
+      const r = await this.store.getRider(order.preferredRiderId);
+      this.events.emit(r && r.status === 'APPROVED' ? { type: 'order.offer', order, leg, offers: [{ rider: r }] } : { type: 'order.no_riders', order, leg });
+      return;
+    }
     const offers = await this.dispatch.candidates(order, leg);
     this.events.emit(offers.length ? { type: 'order.offer', order, leg, offers } : { type: 'order.no_riders', order, leg });
   }
@@ -450,12 +578,17 @@ export class OrderService {
   /** First rider to accept wins; concurrent accepts fail with a version conflict. */
   async claim(riderTelegramId: number, orderId: string): Promise<Order> {
     const rider = await this.riders.requireApproved(riderTelegramId);
-    if (!rider.onDuty) throw invalid('Go on duty first (/on_duty).');
+    const current = await this.store.getOrder(orderId);
+    const chosen = current?.status === 'AWAITING_RIDER' && current.preferredRiderId === rider.id;
+    if (!rider.onDuty && !chosen) throw invalid('Go on duty first (/on_duty).');
     try {
       const { order } = await this.mutate(orderId, async (o, repo) => {
         const r = await repo.getRider(rider.id);
         if (!r) throw notFound('Rider');
         if (o.status === 'AWAITING_RIDER') {
+          if (o.preferredRiderId && o.preferredRiderId !== r.id) {
+            throw new AppError('RESERVED', 'Cette course est réservée au livreur choisi par le vendeur.', 409);
+          }
           if (o.paymentMode === 'COD') {
             const available = r.floatBalance - r.floatReserved;
             if (available < o.itemPrice) {

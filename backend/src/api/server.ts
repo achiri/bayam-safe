@@ -135,8 +135,23 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     rateLimit({ windowMs: 60_000, max: 5 }),
     json,
     h(async (req, res) => {
-      const result = await orders.initiatePayment(req.params.orderId, buyerToken(req), String(req.body?.payerPhone ?? ''));
+      const result = await orders.initiatePayment(req.params.orderId, buyerToken(req), String(req.body?.payerPhone ?? ''), buyerSession(req));
       res.json(result);
+    })
+  );
+
+  /**
+   * "Follow on Telegram": returns a one-time t.me deep link plus this device's session token
+   * (kept by the page, so if this device then pays, the code is also sent on Telegram).
+   */
+  app.post(
+    '/api/checkout/:orderId/follow',
+    rateLimit({ windowMs: 60_000, max: 10 }),
+    h(async (req, res) => {
+      const botUsername = opts.publicConfig?.().botUsername;
+      if (!botUsername) throw new AppError('BOT_UNAVAILABLE', 'Telegram notifications are not available right now.', 503);
+      const { payload, sessionToken } = await orders.createFollowLink(req.params.orderId, buyerToken(req), buyerSession(req));
+      res.json({ url: `https://t.me/${botUsername}?start=${payload}`, sessionToken });
     })
   );
 

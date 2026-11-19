@@ -12,6 +12,8 @@ export type DomainEvent =
   | { type: 'order.offer'; order: Order; leg: 'FIRST' | 'LAST'; offers: RiderOffer[] }
   | { type: 'order.no_riders'; order: Order; leg: 'FIRST' | 'LAST' }
   | { type: 'order.status'; order: Order }
+  | { type: 'order.rider_near'; order: Order; rider: Rider; distanceKm: number }
+  | { type: 'order.buyer_linked'; order: Order }
   | { type: 'order.disputed'; order: Order }
   | { type: 'order.payment_mismatch'; order: Order; paidAmount: number }
   | { type: 'payout.attention'; order: Order; payout: Payout }

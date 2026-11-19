@@ -186,6 +186,19 @@ export interface Order {
 
   firstMileRiderId?: string;
   lastMileRiderId?: string;
+  /** The seller's own rider (by BayamSafe rider number): only they are offered the first leg. */
+  preferredRiderId?: string;
+
+  /** Buyer following the order on Telegram (linked from the checkout page). */
+  buyerTelegramId?: number;
+  buyerLang?: Lang;
+  /** One-time token for the "follow on Telegram" deep link. */
+  followTokenHash?: string;
+  followTokenExpiresAt?: string;
+  /** Device session that created the follow link; the code is sent only if it is the paying device. */
+  followSessionHash?: string;
+  /** Set once the buyer has been told the rider is close. */
+  riderNearNotifiedAt?: string;
   /** COD: rider whose float is reserved against this order. */
   codRiderId?: string;
   codReserved: number;

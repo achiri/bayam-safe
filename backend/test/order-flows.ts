@@ -377,7 +377,7 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       assert.equal((await app.orders.buyerView(order.id, buyerToken, sessionToken)).rider, undefined);
       await app.orders.claim(rider.telegramId, order.id);
       const view = await app.orders.buyerView(order.id, buyerToken, sessionToken);
-      assert.deepEqual(view.rider, { firstName: 'Test', plateNumber: 'LT-123-AB', riderCode: rider.riderCode, vehicleType: 'MOTO', hasPhoto: true });
+      assert.deepEqual(view.rider, { firstName: 'Test', plateNumber: 'LT-123-AB', riderCode: rider.riderCode, vehicleType: 'MOTO', hasPhoto: true, phone: rider.phone });
       assert.equal(await app.orders.riderPhotoFileId(order.id, buyerToken), 'selfie-file-id-0001');
       await rejects(app.orders.riderPhotoFileId(order.id, 'nope'), 'NOT_FOUND');
     });

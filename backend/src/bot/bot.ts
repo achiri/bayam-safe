@@ -25,10 +25,14 @@ interface Draft {
   mode?: PaymentMode;
   /** Set when the seller is correcting one answer from the summary. */
   backToSummary?: boolean;
+  /** The seller's own rider for this sale. */
+  riderCode?: string;
+  riderName?: string;
 }
 
 type Flow =
-  | { kind: 'order'; step: 'title' | 'price' | 'fee' | 'agency' | 'dest' | 'agencyFee' | 'buyer' | 'pickup' | 'mode' | 'confirm'; d: Draft }
+  | { kind: 'order'; step: 'title' | 'price' | 'fee' | 'agency' | 'dest' | 'agencyFee' | 'buyer' | 'pickup' | 'mode' | 'courier' | 'riderCode' | 'confirm'; d: Draft }
+  | { kind: 'assignRider'; orderId: string }
   | { kind: 'waybill'; orderId: string; step: 'number' | 'photo'; number?: string }
   | { kind: 'code'; orderId: string }
   | { kind: 'problem'; orderId: string };
@@ -160,6 +164,14 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   bot.command('start', guard(async (ctx) => {
     ctx.session.flow = undefined;
     const payload = String(ctx.match ?? '');
+    if (payload.startsWith('f_')) {
+      const o = await orders.linkBuyerTelegram(payload, ctx.from!.id, ctx.lang);
+      await html(ctx, ctx.s.bLinked(o.trackingCode) + `\n${ctx.s.status(o.status)}`, { reply_markup: { remove_keyboard: true } });
+      const code = orders.releaseCodeForTelegram(o);
+      if (code) await html(ctx, ctx.s.bCode(code));
+      else if (o.paymentMode === 'ESCROW' && o.payment.confirmedAt) await html(ctx, ctx.s.bCodeOtherDevice);
+      return;
+    }
     const intent = payload === 'rider' ? 'rider' : payload === 'merchant' ? 'merchant' : undefined;
     if (!ctx.user) {
       ctx.session.intent = intent;
@@ -311,8 +323,30 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     const kb = new InlineKeyboard();
     if (['PENDING_PAYMENT', 'AWAITING_RIDER', 'RIDER_ASSIGNED'].includes(o.status)) kb.text(s.btnCancelOrder, `m:cancel:${o.id}`).row();
     if (o.status === 'AT_AGENCY') kb.text(s.btnArrived, `m:arrived:${o.id}`).row();
+    if (['PENDING_PAYMENT', 'AWAITING_RIDER'].includes(o.status)) {
+      kb.text(s.btnAssignOwn, `m:own:${o.id}`);
+      if (o.preferredRiderId) kb.text(s.btnOpenAll, `m:open:${o.id}`);
+      kb.row();
+    }
     return kb;
   };
+
+  const riderSignupLink = () => (bot.isInited() ? `https://t.me/${bot.botInfo.username}?start=rider` : '/rider');
+
+  bot.callbackQuery(/^m:own:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    ctx.session.flow = { kind: 'assignRider', orderId: ctx.match[1] };
+    await html(ctx, ctx.s.askRiderCode(riderSignupLink()));
+  }));
+
+  bot.callbackQuery(/^m:open:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    await orders.setPreferredRider(ctx.match[1], u.id, null);
+    await html(ctx, ctx.s.openedToAll);
+  }));
 
   bot.callbackQuery(/^m:view:(.+)$/, guard(async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -375,7 +409,29 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     const f = ctx.session.flow;
     if (f?.kind !== 'order' || f.step !== 'mode') return;
     f.d.mode = ctx.match[1] as PaymentMode;
-    await showSummary(ctx, f.d);
+    await askCourier(ctx);
+  }));
+
+  const askCourier = async (ctx: BotContext) => {
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order') return;
+    f.step = 'courier';
+    await html(ctx, ctx.s.askCourier, {
+      reply_markup: new InlineKeyboard().text(ctx.s.btnCourierAny, 'ord:courier:any').row().text(ctx.s.btnCourierOwn, 'ord:courier:own')
+    });
+  };
+
+  bot.callbackQuery(/^ord:courier:(any|own)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'courier') return;
+    if (ctx.match[1] === 'any') {
+      f.d.riderCode = undefined;
+      f.d.riderName = undefined;
+      return showSummary(ctx, f.d);
+    }
+    f.step = 'riderCode';
+    await html(ctx, ctx.s.askRiderCode(riderSignupLink()));
   }));
 
   const showSummary = async (ctx: BotContext, d: Draft) => {
@@ -394,7 +450,8 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         total: d.price! + d.fee! + agencyFee,
         buyer: d.buyer!,
         mode: d.mode === 'COD' ? ctx.s.btnCod : ctx.s.btnEscrow,
-        route: agency ? `${agency.name} ${agency.city} (${agency.terminalName}) → ${d.dest}` : undefined
+        route: agency ? `${agency.name} ${agency.city} (${agency.terminalName}) → ${d.dest}` : undefined,
+        rider: d.riderCode ? `${d.riderName} (${d.riderCode})` : undefined
       }),
       { reply_markup: new InlineKeyboard().text(ctx.s.btnConfirm, 'ord:confirm').text(ctx.s.btnAbort, 'ord:abort').row().text(ctx.s.btnEditBuyer, 'ord:edit_buyer') }
     );
@@ -432,7 +489,8 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       pickupAddress: d.pickup!,
       pickupLocation: d.pickupLocation,
       originAgencyId: d.agencyId,
-      destinationCity: d.dest
+      destinationCity: d.dest,
+      preferredRiderCode: d.riderCode
     });
     ctx.session.flow = undefined;
     const pitch = ctx.s.whatsappPitch(order.itemTitle, order.total, checkoutUrl);
@@ -485,7 +543,8 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       await html(ctx, ctx.s.pickupLocationSaved);
       return;
     }
-    await riders.updateLocation(ctx.from.id, { lat: loc.latitude, lng: loc.longitude }).catch(() => undefined);
+    const moved = await riders.updateLocation(ctx.from.id, { lat: loc.latitude, lng: loc.longitude }).catch(() => undefined);
+    if (moved) await orders.onRiderMoved(moved).catch((e) => console.warn('[bot] proximity check failed:', e));
   };
   bot.on('message:location', guard((ctx) => onLocation(ctx, ctx.message.location)));
   bot.on('edited_message:location', async (ctx) => {
@@ -611,6 +670,25 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await html(ctx, ctx.s.askProblem);
   }));
 
+  // ------------------------------------------------------------------ buyer: where is my rider?
+
+  bot.callbackQuery(/^b:where:(.+)$/, guard(async (ctx) => {
+    const o = await orders.get(ctx.match[1]);
+    if (!o || o.buyerTelegramId !== ctx.from.id) return ctx.answerCallbackQuery({ text: 'Not your order', show_alert: true });
+    await ctx.answerCallbackQuery();
+    const r = await orders.activeRider(o);
+    if (!r || !['IN_TRANSIT', 'OUT_FOR_DELIVERY'].includes(o.status) || (o.type === 'INTER_CITY' && o.status === 'IN_TRANSIT')) {
+      return html(ctx, ctx.s.whereNotYet);
+    }
+    const tr = orders.trackingFor(o, r);
+    const name = r.fullName.split(' ')[0];
+    if (!tr) return html(ctx, ctx.s.whereNone(r.phone));
+    await ctx.replyWithLocation(tr.lat, tr.lng);
+    await html(ctx, ctx.s.whereInfo(name, Math.max(0, Math.round((Date.now() - Date.parse(tr.at)) / 60000)), tr.distanceKm, tr.etaMin), {
+      reply_markup: new InlineKeyboard().text(ctx.s.btnWhere, `b:where:${o.id}`)
+    });
+  }));
+
   // ------------------------------------------------------------------ admin buttons
 
   bot.callbackQuery(/^adm:rider:(.+):(a|r:(\w+))$/, guard(async (ctx) => {
@@ -707,6 +785,13 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
           f.step = 'pickup';
           return html(ctx, s.askPickup);
         }
+        if (f.step === 'riderCode') {
+          const card = await riders.verifyCode(text);
+          if (!card?.verified) return html(ctx, s.verifyBad(text.trim().toUpperCase()) + '\n\n' + s.askRiderCode(riderSignupLink()));
+          d.riderCode = card.riderCode;
+          d.riderName = card.firstName;
+          return showSummary(ctx, d);
+        }
         if (f.step === 'pickup') {
           d.pickup = text;
           if (d.type === 'INTRA_CITY') {
@@ -716,7 +801,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
             });
           }
           d.mode = 'ESCROW';
-          return showSummary(ctx, d);
+          return askCourier(ctx);
         }
         return;
       }
@@ -739,6 +824,13 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
           return html(ctx, s.codeLocked);
         }
         return html(ctx, s.codeWrong(res.attemptsLeft));
+      }
+      case 'assignRider': {
+        const u = await requireUser(ctx);
+        if (!u) return;
+        const { rider } = await orders.setPreferredRider(f.orderId, u.id, text);
+        ctx.session.flow = undefined;
+        return html(ctx, s.ownRiderSet(rider!.fullName.split(' ')[0], rider!.riderCode));
       }
       case 'problem': {
         await orders.riderOpenDispute(ctx.from.id, f.orderId, text);
@@ -763,6 +855,46 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   const toAdmins = (text: string, extra: Record<string, unknown> = {}) =>
     Promise.all(config.ADMIN_TELEGRAM_IDS.map((id) => send(id, text, extra)));
   const merchantOf = async (o: Order) => store.getUser(o.merchantId);
+
+  /** Message to the buyer's Telegram, if they follow the order. */
+  const toBuyer = async (o: Order, build: (s: Strings) => string, where = false) => {
+    if (!o.buyerTelegramId) return;
+    const s = t(o.buyerLang ?? 'fr');
+    await send(o.buyerTelegramId, build(s), where ? { reply_markup: new InlineKeyboard().text(s.btnWhere, `b:where:${o.id}`) } : {});
+  };
+
+  async function notifyBuyerOfStatus(o: Order) {
+    const riderFor = async (id?: string) => (id ? store.getRider(id) : undefined);
+    switch (o.status) {
+      case 'RIDER_ASSIGNED':
+      case 'LAST_MILE_ASSIGNED': {
+        const r = await riderFor(o.status === 'RIDER_ASSIGNED' ? o.firstMileRiderId : o.lastMileRiderId);
+        if (r) await toBuyer(o, (s) => s.bRider(r.fullName.split(' ')[0], r.plateNumber, r.riderCode, r.phone));
+        return;
+      }
+      case 'IN_TRANSIT': {
+        const r = await riderFor(o.firstMileRiderId);
+        if (o.type === 'INTER_CITY') return toBuyer(o, (s) => s.mStatus(o.trackingCode, s.status(o.status)));
+        return toBuyer(o, (s) => s.bPickedUp(r?.fullName.split(' ')[0] ?? ''), true);
+      }
+      case 'AT_AGENCY': {
+        const ag = getAgency(o.originAgencyId ?? '');
+        return toBuyer(o, (s) => s.bAtAgency(ag ? `${ag.name} ${ag.city}` : '', o.waybillNumber ?? ''));
+      }
+      case 'AT_DESTINATION_HUB':
+        return toBuyer(o, (s) => s.bHub(o.destinationCity ?? ''));
+      case 'OUT_FOR_DELIVERY': {
+        const r = await riderFor(o.lastMileRiderId);
+        return toBuyer(o, (s) => s.bOut(r?.fullName.split(' ')[0] ?? ''), true);
+      }
+      case 'DELIVERED':
+        return toBuyer(o, (s) => s.bDelivered);
+      case 'REFUNDED':
+        return toBuyer(o, (s) => s.bRefunded);
+      case 'CANCELLED':
+        return toBuyer(o, (s) => s.bCancelled);
+    }
+  }
 
   /** Sends admins the documents as one album, the location pin, then the decision buttons. */
   async function sendReviewCard(
@@ -791,7 +923,15 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
 
   app.events.on(async (e: DomainEvent) => {
     switch (e.type) {
+      case 'order.rider_near':
+        await toBuyer(e.order, (s) => s.bNear(e.rider.fullName.split(' ')[0], Math.max(50, Math.round((e.distanceKm * 1000) / 50) * 50)), true);
+        return;
+      case 'order.buyer_linked':
+        return;
       case 'order.paid': {
+        await toBuyer(e.order, (s) => s.bPaid);
+        const code = orders.releaseCodeForTelegram(e.order);
+        if (code) await toBuyer(e.order, (s) => s.bCode(code));
         const m = await merchantOf(e.order);
         if (m) await send(m.telegramId, t(m.lang).mPaid(e.order.trackingCode, e.order.itemTitle, e.order.total));
         return;
@@ -803,6 +943,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
           const term = destinationTerminal(e.order);
           await send(
             rider.telegramId,
+            (e.order.preferredRiderId === rider.id ? s.offerChosen(e.order.merchantName) : '') +
             s.offer({
               item: e.order.itemTitle,
               pickup: e.leg === 'LAST' && term ? `${term.name} (${term.terminalName})` : e.order.pickupAddress,
@@ -824,6 +965,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         return;
       }
       case 'order.status': {
+        await notifyBuyerOfStatus(e.order);
         const m = await merchantOf(e.order);
         if (!m) return;
         const s = t(m.lang);
@@ -842,6 +984,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         return;
       }
       case 'order.disputed': {
+        await toBuyer(e.order, (s) => s.bDisputed(e.order.dispute?.reason ?? ''));
         const o = e.order;
         const reason = o.dispute?.reason ?? '';
         const m = await merchantOf(o);

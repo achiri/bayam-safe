@@ -72,17 +72,53 @@ const fr = {
     '📱 Numéro WhatsApp / téléphone du client ?\nCameroun : <code>671234567</code> · Étranger : avec l’indicatif, ex : <code>+33 6 12 34 56 78</code>',
   buyerIsYou: '⚠️ C’est votre propre numéro. Entrez le numéro du client (pour un test, n’importe quel autre numéro valide : vous pourrez payer avec votre MoMo sur la page de paiement).',
   btnEditBuyer: '✏️ Changer le numéro du client',
+  // ---- who delivers
+  askCourier: '🏍️ Qui livre ce colis ?',
+  btnCourierAny: '🔎 Un livreur BayamSafe proche',
+  btnCourierOwn: '🤝 Mon propre livreur',
+  askRiderCode: (link: string) =>
+    '🤝 Numéro BayamSafe de votre livreur (ex : <code>BSR-7K4Q</code>) ? Il le voit dans son espace livreur.\n' +
+    `Pas encore inscrit ? Envoyez-lui ce lien pour qu’il s’inscrive en 3 minutes : ${esc(link)}`,
+  btnAssignOwn: '🤝 Assigner mon livreur',
+  btnOpenAll: '🔎 Ouvrir à tous les livreurs',
+  ownRiderSet: (name: string, code: string) => `✅ Course réservée à <b>${esc(name)}</b> (<code>${esc(code)}</code>). Lui seul la recevra.`,
+  openedToAll: '✅ La course est ouverte à tous les livreurs BayamSafe proches.',
+  offerChosen: (shop: string) => `⭐ <b>${esc(shop)} vous a choisi</b> pour cette livraison.\n`,
+
+  // ---- buyer on Telegram
+  bLinked: (code: string) => `✅ <b>Suivi activé</b> pour la commande <code>${esc(code)}</code>.\nVous recevrez ici chaque étape de votre livraison.`,
+  bCode: (code: string) => `🔑 <b>Votre code de libération : <code>${esc(code)}</code></b>\nDonnez-le au livreur uniquement après avoir vérifié le colis.`,
+  bCodeOtherDevice: 'ℹ️ Le code de libération est envoyé seulement si ce suivi a été activé depuis le téléphone qui a payé. Il reste visible sur la page de paiement de ce téléphone.',
+  bPaid: '🔒 <b>Paiement reçu.</b> Votre argent est bloqué chez BayamSafe : le vendeur ne le reçoit qu’après votre code.',
+  bRider: (name: string, plate: string, code: string, phone: string) =>
+    `🏍️ <b>${esc(name)}</b> (${esc(plate)} · <code>${esc(code)}</code>) va chercher votre colis chez le vendeur.\n📞 ${esc(phone)}\nVérifiez son badge à la porte : /verify ${esc(code)}`,
+  bPickedUp: (name: string) => `📦 <b>Colis récupéré !</b> ${esc(name)} vient vers vous.`,
+  bAtAgency: (agency: string, waybill: string) => `🚌 Colis déposé à l’agence <b>${esc(agency)}</b>. Bordereau : <code>${esc(waybill)}</code>.`,
+  bHub: (city: string) => `🏁 Votre colis est arrivé à <b>${esc(city)}</b>. Un livreur local va le récupérer.`,
+  bOut: (name: string) => `🛵 <b>${esc(name)}</b> est en route vers vous avec le colis.`,
+  bNear: (name: string, meters: number) => `📍 <b>${esc(name)} est à environ ${meters} m.</b> Préparez votre code, et vérifiez le colis avant de le donner.`,
+  bDelivered: '🎉 <b>Livraison confirmée.</b> Merci d’avoir acheté avec BayamSafe !',
+  bDisputed: (reason: string) => `⚠️ Un problème a été signalé (« ${esc(reason)} »). Votre argent reste bloqué jusqu’à la décision de notre équipe.`,
+  bRefunded: '↩️ Remboursement envoyé sur le numéro Mobile Money qui a payé.',
+  bCancelled: '✖️ Commande annulée par le vendeur.',
+  btnWhere: '📍 Où est mon livreur ?',
+  whereNone: (phone: string) => `Le livreur n’a pas partagé sa position récemment. Vous pouvez l’appeler : ${esc(phone)}`,
+  whereInfo: (name: string, mins: number, dist?: number, eta?: number) =>
+    `📍 Position de ${esc(name)} il y a ${mins} min` + (dist !== undefined ? ` · à ${dist} km de vous (≈ ${eta} min)` : ''),
+  whereNotYet: 'Le colis n’est pas encore en route vers vous. Vous serez prévenu dès qu’il part.',
+
   askPickup: '📍 Adresse de ramassage (quartier, repère).\nVous pouvez aussi d’abord partager votre position 📎 → Position.',
   pickupLocationSaved: '📍 Position enregistrée. Décrivez maintenant l’adresse en quelques mots (quartier, repère).',
   askPaymentMode: '💳 Comment le client paie-t-il ?',
   btnEscrow: '🔒 Séquestre MoMo/OM (recommandé)',
   btnCod: '💵 Cash à la livraison',
   invalidNumber: '⚠️ Entrez un montant en chiffres, ex : 15000',
-  summary: (d: { title: string; price: number; fee: number; agencyFee: number; total: number; buyer: string; mode: string; route?: string }) =>
+  summary: (d: { title: string; price: number; fee: number; agencyFee: number; total: number; buyer: string; mode: string; route?: string; rider?: string }) =>
     `<b>Récapitulatif</b>\n📦 ${esc(d.title)}\n💰 Article : ${fr.money(d.price)}\n🛵 Livraison : ${fr.money(d.fee)}` +
     (d.agencyFee ? `\n🧾 Agence : ${fr.money(d.agencyFee)}` : '') +
     `\n<b>Total client : ${fr.money(d.total)}</b>\n📱 Client : ${esc(d.buyer)}\n💳 ${esc(d.mode)}` +
-    (d.route ? `\n🚌 ${esc(d.route)}` : ''),
+    (d.route ? `\n🚌 ${esc(d.route)}` : '') +
+    `\n🏍️ ${d.rider ? `Votre livreur : ${esc(d.rider)}` : 'Un livreur BayamSafe proche'}`,
   btnConfirm: '✅ Créer la commande',
   btnAbort: '✖️ Annuler',
   orderCreated: (code: string, url: string, cod: boolean) =>
@@ -268,6 +304,40 @@ const en: Strings = {
     '📱 Buyer’s WhatsApp / phone number?\nCameroon: <code>671234567</code> · Abroad: with the country code, e.g. <code>+44 7700 900123</code>',
   buyerIsYou: '⚠️ That’s your own number. Enter the buyer’s number (for a test, any other valid number works: you can still pay with your own MoMo on the payment page).',
   btnEditBuyer: '✏️ Change buyer number',
+  // ---- who delivers
+  askCourier: '🏍️ Who delivers this parcel?',
+  btnCourierAny: '🔎 A nearby BayamSafe rider',
+  btnCourierOwn: '🤝 My own rider',
+  askRiderCode: (link) =>
+    '🤝 Your rider’s BayamSafe number (e.g. <code>BSR-7K4Q</code>)? They see it in their rider area.\n' +
+    `Not signed up yet? Send them this link to sign up in 3 minutes: ${esc(link)}`,
+  btnAssignOwn: '🤝 Assign my rider',
+  btnOpenAll: '🔎 Open to all riders',
+  ownRiderSet: (name, code) => `✅ Job reserved for <b>${esc(name)}</b> (<code>${esc(code)}</code>). Only they will get it.`,
+  openedToAll: '✅ The job is open to all nearby BayamSafe riders.',
+  offerChosen: (shop) => `⭐ <b>${esc(shop)} chose you</b> for this delivery.\n`,
+
+  // ---- buyer on Telegram
+  bLinked: (code) => `✅ <b>Tracking on</b> for order <code>${esc(code)}</code>.\nYou’ll get every step of your delivery here.`,
+  bCode: (code) => `🔑 <b>Your release code: <code>${esc(code)}</code></b>\nOnly give it to the rider after checking the parcel.`,
+  bCodeOtherDevice: 'ℹ️ The release code is only sent if tracking was turned on from the phone that paid. It stays visible on that phone’s payment page.',
+  bPaid: '🔒 <b>Payment received.</b> Your money is locked with BayamSafe: the seller only gets it after your code.',
+  bRider: (name, plate, code, phone) =>
+    `🏍️ <b>${esc(name)}</b> (${esc(plate)} · <code>${esc(code)}</code>) is collecting your parcel from the seller.\n📞 ${esc(phone)}\nCheck their badge at the door: /verify ${esc(code)}`,
+  bPickedUp: (name) => `📦 <b>Parcel picked up!</b> ${esc(name)} is coming to you.`,
+  bAtAgency: (agency, waybill) => `🚌 Parcel dropped at <b>${esc(agency)}</b>. Waybill: <code>${esc(waybill)}</code>.`,
+  bHub: (city) => `🏁 Your parcel arrived in <b>${esc(city)}</b>. A local rider will collect it.`,
+  bOut: (name) => `🛵 <b>${esc(name)}</b> is on the way to you with the parcel.`,
+  bNear: (name, meters) => `📍 <b>${esc(name)} is about ${meters} m away.</b> Get your code ready, and check the parcel before giving it.`,
+  bDelivered: '🎉 <b>Delivery confirmed.</b> Thanks for buying with BayamSafe!',
+  bDisputed: (reason) => `⚠️ A problem was reported (“${esc(reason)}”). Your money stays locked until our team decides.`,
+  bRefunded: '↩️ Refund sent to the Mobile Money number that paid.',
+  bCancelled: '✖️ Order cancelled by the seller.',
+  btnWhere: '📍 Where is my rider?',
+  whereNone: (phone) => `The rider hasn’t shared their location recently. You can call them: ${esc(phone)}`,
+  whereInfo: (name, mins, dist, eta) => `📍 ${esc(name)}’s position ${mins} min ago` + (dist !== undefined ? ` · ${dist} km from you (≈ ${eta} min)` : ''),
+  whereNotYet: 'The parcel isn’t on its way to you yet. You’ll be told as soon as it leaves.',
+
   askPickup: '📍 Pickup address (neighbourhood, landmark).\nYou can also share your location first 📎 → Location.',
   pickupLocationSaved: '📍 Location saved. Now describe the address in a few words (neighbourhood, landmark).',
   askPaymentMode: '💳 How will the buyer pay?',
@@ -278,7 +348,8 @@ const en: Strings = {
     `<b>Summary</b>\n📦 ${esc(d.title)}\n💰 Item: ${en.money(d.price)}\n🛵 Delivery: ${en.money(d.fee)}` +
     (d.agencyFee ? `\n🧾 Agency: ${en.money(d.agencyFee)}` : '') +
     `\n<b>Buyer total: ${en.money(d.total)}</b>\n📱 Buyer: ${esc(d.buyer)}\n💳 ${esc(d.mode)}` +
-    (d.route ? `\n🚌 ${esc(d.route)}` : ''),
+    (d.route ? `\n🚌 ${esc(d.route)}` : '') +
+    `\n🏍️ ${d.rider ? `Your rider: ${esc(d.rider)}` : 'A nearby BayamSafe rider'}`,
   btnConfirm: '✅ Create order',
   btnAbort: '✖️ Cancel',
   orderCreated: (code, url, cod) =>

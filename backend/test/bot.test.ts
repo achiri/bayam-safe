@@ -194,6 +194,7 @@ describe('telegram bot', () => {
     await h.text(M, '699 11 22 33');
     await h.text(M, 'Akwa, face Total');
     await h.press(M, 'ord:mode:ESCROW');
+    await h.press(M, 'ord:courier:any');
     await h.press(M, 'ord:edit_buyer'); // fix the buyer number from the summary
     await h.text(M, '06 12 34 56 78'); // a foreign number without its country code is refused
     assert.match(h.lastText(), /indicatif/);
