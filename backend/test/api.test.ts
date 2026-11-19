@@ -142,6 +142,34 @@ describe('HTTP API', () => {
     assert.equal(r.body.status, 'REFUNDED');
   });
 
+  it('admin overview, seller review with reason, and the map feed', async () => {
+    const auth = { authorization: `Bearer ${ADMIN}` };
+    const seller = await makeMerchant(app, { kycStatus: 'PENDING', selfieFileId: 'x', draft: { kind: 'merchant', step: 'city', data: { cniNumber: 'secret' }, startedAt: new Date().toISOString() } });
+    const ov = await call('GET', '/api/admin/overview', { headers: auth });
+    assert.equal(ov.status, 200);
+    assert.ok(ov.body.queues.kycPending >= 1);
+    assert.equal(ov.body.days.length, 14);
+    const users = await call('GET', '/api/admin/users', { headers: auth });
+    const listed = users.body.find((u: any) => u.id === seller.id);
+    assert.equal(listed.draft, undefined);
+    assert.deepEqual(listed.signupInProgress.step, 'city');
+    assert.equal((await call('POST', `/api/admin/users/${seller.id}/kyc`, { headers: auth, json: { approve: false } })).status, 400);
+    const refused = await call('POST', `/api/admin/users/${seller.id}/kyc`, { headers: auth, json: { approve: false, note: 'CNI illisible' } });
+    assert.equal(refused.body.kycStatus, 'REJECTED');
+    assert.equal((await call('GET', '/api/admin/files/abcdefghijkl', { headers: auth })).status, 503);
+    const map = await call('GET', '/api/admin/map', { headers: auth });
+    assert.ok(Array.isArray(map.body.riders) && Array.isArray(map.body.orders));
+  });
+
+  it('serves the landing page at / and the dashboard at /admin', async () => {
+    const home = await fetch(base + '/');
+    assert.match(await home.text(), /Vendez en ligne/);
+    const admin = await fetch(base + '/admin');
+    assert.equal(admin.headers.get('x-robots-tag'), 'noindex');
+    assert.match(await admin.text(), /Poste de contrôle/);
+    assert.deepEqual((await call('GET', '/api/config')).body, { botUsername: null });
+  });
+
   it('unknown API routes return JSON 404', async () => {
     const r = await call('GET', '/api/nope');
     assert.equal(r.status, 404);

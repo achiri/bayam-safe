@@ -5,9 +5,15 @@ import { createServer } from './api/server.js';
 import { createBot } from './bot/bot.js';
 import { loadConfig } from './config.js';
 import { seedDemoData } from './seed.js';
+import { Secrets } from './domain/secrets.js';
 
 async function main() {
   const config = loadConfig();
+  if (!config.ADMIN_API_KEY && config.SEED_DEMO_DATA && config.NODE_ENV !== 'production') {
+    // Demo convenience: a throwaway key, printed once, valid until the process stops.
+    config.ADMIN_API_KEY = Secrets.token(18);
+    console.log(`Demo admin key (this run only): ${config.ADMIN_API_KEY}`);
+  }
   const app = createApp(config);
   await app.store.migrate();
 
@@ -16,6 +22,7 @@ async function main() {
   const bot = config.TELEGRAM_BOT_TOKEN ? createBot(app, config.TELEGRAM_BOT_TOKEN) : undefined;
 
   const server = createServer(app, {
+    publicConfig: () => ({ botUsername: bot?.isInited() ? bot.botInfo.username : undefined }),
     mount: (http) => {
       if (bot && config.TELEGRAM_USE_WEBHOOK) {
         http.post('/api/webhooks/telegram', webhookCallback(bot, 'express', { secretToken: config.TELEGRAM_WEBHOOK_SECRET }));

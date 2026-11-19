@@ -53,7 +53,7 @@ const fr = {
   btnNewIntra: '🏍️ Nouvelle vente (même ville)',
   btnNewInter: '🚌 Nouvelle vente (autre ville)',
   btnMyOrders: '📦 Mes commandes',
-  btnKyc: '🏅 Badge vendeur vérifié',
+  btnKyc: '🏪 Mon profil vendeur',
   btnRider: '🛵 Espace livreur',
   btnLeaderboard: '🏆 Classement livreurs',
   btnLang: '🌐 English',
@@ -99,25 +99,78 @@ const fr = {
   btnArrived: '🏁 Le bus est arrivé',
   orderCancelledMsg: (code: string) => `✖️ Commande ${esc(code)} annulée.`,
 
-  kycIntro: '🏅 <b>Badge vendeur vérifié</b>\nNous vérifions votre pièce d’identité avant d’afficher le badge à vos clients.\n\nEntrez votre numéro de CNI :',
-  kycAskPhoto: '📸 Envoyez maintenant une photo nette de votre CNI (recto).',
-  kycSubmitted: '✅ Merci ! Votre demande est en cours de vérification. Vous serez notifié.',
-  kycAlready: (s: string) => `Statut de votre badge : <b>${esc(s)}</b>`,
-  kycApproved: '🏅 Votre badge vendeur vérifié est actif !',
-  kycRejected: '❌ Votre demande de badge a été refusée. Contactez le support.',
+  // ---- sign-up (merchant & rider)
+  progress: (n: number, total: number) => `<b>Étape ${n}/${total}</b>  ${'▰'.repeat(n)}${'▱'.repeat(total - n)}`,
+  mIntro:
+    '🏪 <b>Profil vendeur</b> : 8 étapes, environ 3 minutes.\n' +
+    'Vos documents ne sont vus que par l’équipe de vérification BayamSafe. Vous pouvez vous arrêter à tout moment (/cancel) : on reprendra exactement où vous en étiez.',
+  rIntro:
+    '🛵 <b>Devenir livreur BayamSafe</b> : 9 étapes, environ 3 minutes.\n' +
+    'Ayez votre CNI et votre moto à portée de main. Vous pouvez vous arrêter à tout moment (/cancel) : on reprendra où vous en étiez.',
+  resume: '👋 On reprend où vous vous étiez arrêté :',
+  ask_shopName: '🏪 Nom de votre boutique, celui que vos clients connaissent ?',
+  ask_city: '🏙️ Dans quelle ville se trouve votre boutique ?',
+  ask_selfie: '🤳 Un <b>selfie</b> : visage bien éclairé, sans lunettes de soleil ni casquette.\n📎 → Caméra',
+  ask_cniFront: '🪪 Photo du <b>recto</b> de votre CNI (ou passeport) : posée à plat, les 4 coins visibles, sans reflet.',
+  ask_cniBack: '🪪 Maintenant le <b>verso</b> de la carte.',
+  ask_cniNumber: '🔢 Numéro de la CNI, tel qu’il est écrit sur la carte ?',
+  ask_shopPhoto: '🏬 Une photo de votre <b>boutique ou de votre stock</b> : devanture, étal, ou l’endroit où vous préparez les colis.',
+  ask_shopLocation:
+    '📍 <b>Position exacte de la boutique.</b>\nSi vous y êtes, appuyez sur le bouton ci-dessous. Sinon : 📎 → Position, puis déplacez l’épingle sur la boutique.',
+  btnSendLocation: '📍 Envoyer ma position actuelle',
+  ask_legalName: '🪪 Vos <b>prénom et nom</b>, exactement comme sur votre CNI ?',
+  btnUseName: (n: string) => `Utiliser « ${n} »`,
+  ask_vehicleType: '🏍️ Avec quoi livrez-vous ?',
+  btnMoto: '🏍️ Moto',
+  btnCar: '🚗 Voiture',
+  btnVan: '🚐 Camionnette',
+  ask_plate: '🔢 Numéro d’immatriculation ? (ex : LT 123 AB)',
+  ask_vehiclePhoto: '📸 Photo de votre véhicule, <b>plaque bien lisible</b>.',
+  ask_riderCity: '🏙️ Dans quelle ville livrez-vous ?',
+  needPhoto: '📸 Pour cette étape, envoyez une photo (📎 → Caméra ou Galerie).',
+  needLocation: '📍 Pour cette étape, envoyez une position (bouton ci-dessous, ou 📎 → Position).',
+  needText: '✍️ Pour cette étape, répondez par un message texte.',
+  badShopName: '⚠️ Nom trop court.',
+  badName: '⚠️ Entrez prénom ET nom, comme sur la CNI.',
+  badPlate: '⚠️ Plaque invalide. Exemple : LT 123 AB',
+  badId: '⚠️ Numéro invalide : 6 à 20 chiffres ou lettres.',
+  reviewMerchant: (d: { shop: string; city: string; cni: string }) =>
+    `<b>Vérifiez avant d’envoyer</b>\n🏪 ${esc(d.shop)} · ${esc(d.city)}\n🔢 CNI ${esc(d.cni)}\n✅ Selfie · ✅ CNI recto et verso · ✅ Photo boutique · ✅ Position GPS`,
+  reviewRider: (d: { name: string; city: string; cni: string; vehicle: string; plate: string }) =>
+    `<b>Vérifiez avant d’envoyer</b>\n👤 ${esc(d.name)} · ${esc(d.city)}\n🔢 CNI ${esc(d.cni)}\n${esc(d.vehicle)} · ${esc(d.plate)}\n✅ Selfie · ✅ CNI recto et verso · ✅ Photo véhicule`,
+  btnSubmit: '✅ Envoyer pour vérification',
+  btnRestart: '🔁 Recommencer',
+  mSubmitted:
+    '✅ <b>Profil envoyé !</b>\nVous pouvez déjà créer des ventes. Le badge 🏅 Vendeur vérifié apparaîtra sur vos liens dès que notre équipe aura vérifié vos documents.',
+  rSubmitted: '✅ <b>Candidature envoyée !</b>\nNotre équipe compare votre selfie et votre CNI. Vous recevrez ici votre numéro de livreur dès l’approbation.',
+  onboardingPaused: '⏸️ Inscription en pause. Envoyez /start pour reprendre.',
+  mustCompleteProfile: '🏪 Avant votre première vente, complétez votre profil vendeur (3 minutes). C’est ce qui rassure vos clients.',
+  btnCompleteProfile: '🏪 Compléter mon profil vendeur',
+  profileStatus: (status: string, note?: string) =>
+    ({
+      NONE: '🏪 Profil vendeur : <b>à compléter</b>.',
+      PENDING: '⏳ Profil vendeur : <b>en cours de vérification</b>. Vous pouvez déjà vendre.',
+      VERIFIED: '🏅 Profil vendeur : <b>vérifié</b>. Le badge est visible sur vos liens.',
+      REJECTED: `❌ Profil vendeur : <b>refusé</b>${note ? ` (${esc(note)})` : ''}. Corrigez et renvoyez-le.`
+    })[status] ?? status,
+  kycApproved: '🏅 <b>Félicitations, vous êtes vendeur vérifié !</b>\nVos clients voient maintenant le badge sur chaque lien de paiement.',
+  kycRejected: (note: string) => `❌ <b>Profil vendeur refusé</b>\nMotif : ${esc(note)}\n\nEnvoyez /start pour corriger et renvoyer vos documents.`,
 
-  riderMenu: (status?: string, onDuty?: boolean, float?: number, reserved?: number) =>
+  riderMenu: (status?: string, onDuty?: boolean, float?: number, reserved?: number, code?: string) =>
     status
-      ? `🛵 <b>Espace livreur</b>\nStatut : <b>${esc(status)}</b>${onDuty ? ' · 🟢 En service' : ' · 🔴 Hors service'}\n` +
+      ? `🛵 <b>Espace livreur</b>${code ? ` · <code>${esc(code)}</code>` : ''}\nStatut : <b>${esc(status)}</b>${onDuty ? ' · 🟢 En service' : ' · 🔴 Hors service'}\n` +
         `💼 Caution : ${fr.money(float ?? 0)} (bloqué : ${fr.money(reserved ?? 0)})\n\n` +
         '/on_duty · /off_duty · /jobs · /float\nPartagez votre position en direct (📎 → Position → en direct) pour recevoir les courses proches.'
-      : '🛵 Pas encore livreur ? Envoyez /register_rider.',
-  riderAskCni: '🪪 Inscription livreur. Numéro de CNI ?',
-  riderAskPlate: '🏍️ Numéro d’immatriculation ?',
-  riderAskCity: '🏙️ Votre ville ?',
-  riderApplied: '✅ Demande envoyée. Un responsable vous contactera pour vérifier vos documents.',
-  riderApproved: '✅ Votre compte livreur est approuvé ! Envoyez /on_duty puis partagez votre position en direct.',
-  riderSuspended: '⛔ Votre compte livreur est suspendu. Contactez le support.',
+      : '🛵 Pas encore livreur ? Inscrivez-vous en 3 minutes.',
+  btnBecomeRider: '🛵 Devenir livreur',
+  riderApproved: (code: string) =>
+    `✅ <b>Bienvenue chez les livreurs BayamSafe !</b>\nVotre numéro : <code>${esc(code)}</code>. Les clients peuvent le vérifier avec /verify.\n\nEnvoyez /on_duty puis partagez votre position en direct pour recevoir des courses.`,
+  riderRejected: (note: string) => `❌ <b>Candidature refusée</b>\nMotif : ${esc(note)}\n\nEnvoyez /start pour corriger et renvoyer.`,
+  riderSuspended: (note: string) => `⛔ Votre compte livreur est suspendu. Motif : ${esc(note)}`,
+  verifyUsage: 'Envoyez /verify suivi du numéro inscrit sur le badge, par exemple : <code>/verify BSR-7K4Q</code>',
+  verifyOk: (c: { name: string; plate: string; city?: string; n: number; code: string }) =>
+    `✅ <b>Livreur vérifié BayamSafe</b>\n${esc(c.name)} · ${esc(c.plate)}\n${esc(c.city ?? '')} · ${c.n} livraison(s)\nNuméro : <code>${esc(c.code)}</code>\n\nComparez le visage sur la photo avec la personne devant vous.`,
+  verifyBad: (code: string) => `❌ Le numéro <code>${esc(code)}</code> ne correspond à aucun livreur vérifié. Ne remettez ni colis ni argent.`,
   onDuty: '🟢 En service. Partagez votre position en direct pour recevoir les courses proches.',
   offDuty: '🔴 Hors service.',
   floatInfo: (bal: number, res: number) =>
@@ -167,8 +220,8 @@ const fr = {
   mDisputed: (code: string, reason: string) => `⚠️ <code>${esc(code)}</code> : litige ouvert (« ${esc(reason)} »). L’argent reste bloqué jusqu’à décision.`,
   leaderboard: (rows: string) => `🏆 <b>Meilleurs livreurs</b>\n\n${rows || '—'}`,
   help:
-    '<b>Commandes</b>\n/menu — menu principal\n/orders — mes commandes\n/kyc — badge vérifié\n/lang — langue\n/cancel — annuler l’opération\n\n' +
-    '<b>Livreurs</b>\n/register_rider · /on_duty · /off_duty · /jobs · /float · /topup'
+    '<b>Commandes</b>\n/menu — menu principal\n/orders — mes commandes\n/profile — mon profil vendeur\n/verify — vérifier un livreur\n/lang — langue\n/cancel — mettre en pause\n\n' +
+    '<b>Livreurs</b>\n/rider · /on_duty · /off_duty · /jobs · /float · /topup'
 };
 
 type Strings = typeof fr;
@@ -187,7 +240,7 @@ const en: Strings = {
   btnNewIntra: '🏍️ New sale (same city)',
   btnNewInter: '🚌 New sale (other city)',
   btnMyOrders: '📦 My orders',
-  btnKyc: '🏅 Verified seller badge',
+  btnKyc: '🏪 My seller profile',
   btnRider: '🛵 Rider area',
   btnLeaderboard: '🏆 Rider leaderboard',
   btnLang: '🌐 Français',
@@ -233,25 +286,76 @@ const en: Strings = {
   btnArrived: '🏁 Bus has arrived',
   orderCancelledMsg: (code) => `✖️ Order ${esc(code)} cancelled.`,
 
-  kycIntro: '🏅 <b>Verified seller badge</b>\nWe check your ID before showing the badge to your buyers.\n\nEnter your national ID (CNI) number:',
-  kycAskPhoto: '📸 Now send a clear photo of the front of your ID card.',
-  kycSubmitted: '✅ Thanks! Your request is being reviewed. We will notify you.',
-  kycAlready: (s) => `Your badge status: <b>${esc(s)}</b>`,
-  kycApproved: '🏅 Your verified seller badge is active!',
-  kycRejected: '❌ Your badge request was declined. Please contact support.',
+  progress: (n, total) => `<b>Step ${n}/${total}</b>  ${'▰'.repeat(n)}${'▱'.repeat(total - n)}`,
+  mIntro:
+    '🏪 <b>Seller profile</b>: 8 steps, about 3 minutes.\n' +
+    'Your documents are only seen by the BayamSafe verification team. You can stop at any time (/cancel): we’ll pick up exactly where you left off.',
+  rIntro:
+    '🛵 <b>Become a BayamSafe rider</b>: 9 steps, about 3 minutes.\n' +
+    'Have your ID card and vehicle at hand. You can stop at any time (/cancel): we’ll pick up where you left off.',
+  resume: '👋 Picking up where you left off:',
+  ask_shopName: '🏪 Your shop’s name, the one your buyers know?',
+  ask_city: '🏙️ Which city is your shop in?',
+  ask_selfie: '🤳 A <b>selfie</b>: face well lit, no sunglasses or cap.\n📎 → Camera',
+  ask_cniFront: '🪪 Photo of the <b>front</b> of your ID card (or passport): flat, all 4 corners visible, no glare.',
+  ask_cniBack: '🪪 Now the <b>back</b> of the card.',
+  ask_cniNumber: '🔢 ID card number, as written on the card?',
+  ask_shopPhoto: '🏬 A photo of your <b>shop or stock</b>: shopfront, stall, or where you pack parcels.',
+  ask_shopLocation:
+    '📍 <b>Exact shop location.</b>\nIf you are there, tap the button below. Otherwise: 📎 → Location, then drag the pin onto the shop.',
+  btnSendLocation: '📍 Send my current location',
+  ask_legalName: '🪪 Your <b>first and last name</b>, exactly as on your ID card?',
+  btnUseName: (n) => `Use “${n}”`,
+  ask_vehicleType: '🏍️ What do you deliver with?',
+  btnMoto: '🏍️ Motorbike',
+  btnCar: '🚗 Car',
+  btnVan: '🚐 Van',
+  ask_plate: '🔢 Plate number? (e.g. LT 123 AB)',
+  ask_vehiclePhoto: '📸 Photo of your vehicle with the <b>plate clearly readable</b>.',
+  ask_riderCity: '🏙️ Which city do you deliver in?',
+  needPhoto: '📸 For this step, send a photo (📎 → Camera or Gallery).',
+  needLocation: '📍 For this step, send a location (button below, or 📎 → Location).',
+  needText: '✍️ For this step, reply with a text message.',
+  badShopName: '⚠️ Name too short.',
+  badName: '⚠️ Enter first AND last name, as on the ID card.',
+  badPlate: '⚠️ Invalid plate. Example: LT 123 AB',
+  badId: '⚠️ Invalid number: 6 to 20 digits or letters.',
+  reviewMerchant: (d) =>
+    `<b>Check before sending</b>\n🏪 ${esc(d.shop)} · ${esc(d.city)}\n🔢 ID ${esc(d.cni)}\n✅ Selfie · ✅ ID front and back · ✅ Shop photo · ✅ GPS location`,
+  reviewRider: (d) =>
+    `<b>Check before sending</b>\n👤 ${esc(d.name)} · ${esc(d.city)}\n🔢 ID ${esc(d.cni)}\n${esc(d.vehicle)} · ${esc(d.plate)}\n✅ Selfie · ✅ ID front and back · ✅ Vehicle photo`,
+  btnSubmit: '✅ Send for verification',
+  btnRestart: '🔁 Start over',
+  mSubmitted: '✅ <b>Profile sent!</b>\nYou can already create sales. The 🏅 Verified seller badge will appear on your links once our team has checked your documents.',
+  rSubmitted: '✅ <b>Application sent!</b>\nOur team compares your selfie and ID. You will get your rider number here once approved.',
+  onboardingPaused: '⏸️ Sign-up paused. Send /start to continue.',
+  mustCompleteProfile: '🏪 Before your first sale, complete your seller profile (3 minutes). It’s what reassures your buyers.',
+  btnCompleteProfile: '🏪 Complete my seller profile',
+  profileStatus: (status, note) =>
+    ({
+      NONE: '🏪 Seller profile: <b>to complete</b>.',
+      PENDING: '⏳ Seller profile: <b>being verified</b>. You can already sell.',
+      VERIFIED: '🏅 Seller profile: <b>verified</b>. The badge shows on your links.',
+      REJECTED: `❌ Seller profile: <b>refused</b>${note ? ` (${esc(note)})` : ''}. Fix it and resubmit.`
+    })[status] ?? status,
+  kycApproved: '🏅 <b>Congratulations, you are a verified seller!</b>\nBuyers now see the badge on every payment link.',
+  kycRejected: (note) => `❌ <b>Seller profile refused</b>\nReason: ${esc(note)}\n\nSend /start to fix and resubmit your documents.`,
 
-  riderMenu: (status, onDuty, float, reserved) =>
+  riderMenu: (status, onDuty, float, reserved, code) =>
     status
-      ? `🛵 <b>Rider area</b>\nStatus: <b>${esc(status)}</b>${onDuty ? ' · 🟢 On duty' : ' · 🔴 Off duty'}\n` +
+      ? `🛵 <b>Rider area</b>${code ? ` · <code>${esc(code)}</code>` : ''}\nStatus: <b>${esc(status)}</b>${onDuty ? ' · 🟢 On duty' : ' · 🔴 Off duty'}\n` +
         `💼 Float: ${en.money(float ?? 0)} (locked: ${en.money(reserved ?? 0)})\n\n` +
         '/on_duty · /off_duty · /jobs · /float\nShare your live location (📎 → Location → live) to get nearby jobs.'
-      : '🛵 Not a rider yet? Send /register_rider.',
-  riderAskCni: '🪪 Rider sign-up. National ID (CNI) number?',
-  riderAskPlate: '🏍️ Plate number?',
-  riderAskCity: '🏙️ Your city?',
-  riderApplied: '✅ Application sent. Someone will contact you to check your documents.',
-  riderApproved: '✅ Your rider account is approved! Send /on_duty then share your live location.',
-  riderSuspended: '⛔ Your rider account is suspended. Please contact support.',
+      : '🛵 Not a rider yet? Sign up in 3 minutes.',
+  btnBecomeRider: '🛵 Become a rider',
+  riderApproved: (code) =>
+    `✅ <b>Welcome to BayamSafe riders!</b>\nYour number: <code>${esc(code)}</code>. Buyers can check it with /verify.\n\nSend /on_duty then share your live location to receive jobs.`,
+  riderRejected: (note) => `❌ <b>Application refused</b>\nReason: ${esc(note)}\n\nSend /start to fix and resubmit.`,
+  riderSuspended: (note) => `⛔ Your rider account is suspended. Reason: ${esc(note)}`,
+  verifyUsage: 'Send /verify followed by the number on the badge, for example: <code>/verify BSR-7K4Q</code>',
+  verifyOk: (c) =>
+    `✅ <b>Verified BayamSafe rider</b>\n${esc(c.name)} · ${esc(c.plate)}\n${esc(c.city ?? '')} · ${c.n} deliver${c.n === 1 ? 'y' : 'ies'}\nNumber: <code>${esc(c.code)}</code>\n\nCompare the face in the photo with the person in front of you.`,
+  verifyBad: (code) => `❌ Number <code>${esc(code)}</code> does not match any verified rider. Don’t hand over a parcel or money.`,
   onDuty: '🟢 On duty. Share your live location to receive nearby jobs.',
   offDuty: '🔴 Off duty.',
   floatInfo: (bal, res) => `💼 Float: <b>${en.money(bal)}</b>\n🔒 Locked on cash jobs: ${en.money(res)}\n\nTo top up: <code>/topup 10000</code>`,
@@ -299,8 +403,8 @@ const en: Strings = {
   mDisputed: (code, reason) => `⚠️ <code>${esc(code)}</code>: dispute opened (“${esc(reason)}”). Funds stay locked until a decision.`,
   leaderboard: (rows) => `🏆 <b>Top riders</b>\n\n${rows || '—'}`,
   help:
-    '<b>Commands</b>\n/menu — main menu\n/orders — my orders\n/kyc — verified badge\n/lang — language\n/cancel — stop current step\n\n' +
-    '<b>Riders</b>\n/register_rider · /on_duty · /off_duty · /jobs · /float · /topup'
+    '<b>Commands</b>\n/menu — main menu\n/orders — my orders\n/profile — my seller profile\n/verify — check a rider\n/lang — language\n/cancel — pause current step\n\n' +
+    '<b>Riders</b>\n/rider · /on_duty · /off_duty · /jobs · /float · /topup'
 };
 
 const dictionaries: Record<Lang, Strings> = { fr, en };

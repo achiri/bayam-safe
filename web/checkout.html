@@ -62,6 +62,15 @@
         <div class="font-mono text-4xl font-black text-emerald-700 tracking-[0.3em]" id="releaseCode"></div>
         <p class="text-xs text-red-600 font-bold" data-i18n="codeWarning"></p>
       </section>
+ <section id="riderCard" class="hidden flex items-center gap-3 bg-slate-900 text-white rounded-2xl p-3">
+        <img id="riderPhoto" alt="" class="hidden w-14 h-14 rounded-xl object-cover bg-slate-700">
+        <div class="min-w-0">
+          <div class="text-[11px] uppercase tracking-widest text-emerald-300 font-bold" data-i18n="riderTitle"></div>
+          <div class="font-extrabold" id="riderName"></div>
+          <div class="text-xs text-slate-300 font-mono" id="riderMeta"></div>
+          <div class="text-[11px] text-slate-400" id="riderVerify"></div>
+        </div>
+      </section>
       <section id="otherDevice" class="hidden bg-amber-50 border border-amber-300 rounded-2xl p-3 text-xs text-amber-900" data-i18n="otherDevice"></section>
 
       <!-- Payment -->
@@ -132,6 +141,7 @@
       deliveryPoint: '📍 Point de livraison', useGps: '📍 Utiliser ma position actuelle', saveDelivery: 'Enregistrer l’adresse',
       addressPh: 'Quartier / adresse', landmarkPh: 'Repère : portail bleu face pharmacie…', saved: '✅ Enregistré',
       voiceTitle: '🎙️ Indications vocales (15 s max)', record: 'Enregistrer', stop: 'Arrêter', voiceSaved: '✅ Note vocale envoyée au livreur',
+      riderTitle: 'Votre livreur', riderVerify: (c) => `Vérifiez-le à la porte : envoyez « /verify ${c} » au bot BayamSafe.`,
       timeline: 'Suivi', reportProblem: '⚠️ Signaler un problème avec le colis', disputePrompt: 'Décrivez le problème :',
       disputed: 'Litige ouvert. L’argent reste bloqué jusqu’à décision.', invalidLink: 'Lien invalide ou expiré. Demandez un nouveau lien au vendeur.',
       footer: 'BayamSafe · Séquestre pour le commerce en ligne au Cameroun', gpsFix: (a) => `Position fixée (±${a} m)`,
@@ -156,6 +166,7 @@
       deliveryPoint: '📍 Delivery point', useGps: '📍 Use my current location', saveDelivery: 'Save address',
       addressPh: 'Neighbourhood / address', landmarkPh: 'Landmark: blue gate opposite pharmacy…', saved: '✅ Saved',
       voiceTitle: '🎙️ Voice directions (15 s max)', record: 'Record', stop: 'Stop', voiceSaved: '✅ Voice note sent to the rider',
+      riderTitle: 'Your rider', riderVerify: (c) => `Check them at the door: send “/verify ${c}” to the BayamSafe bot.`,
       timeline: 'Tracking', reportProblem: '⚠️ Report a problem with the parcel', disputePrompt: 'Describe the problem:',
       disputed: 'Dispute opened. The money stays locked until a decision.', invalidLink: 'Invalid or expired link. Ask the seller for a new one.',
       footer: 'BayamSafe · Escrow for social commerce in Cameroon', gpsFix: (a) => `Location fixed (±${a} m)`,
@@ -250,6 +261,20 @@
     if (document.activeElement !== $('landmarkInput')) $('landmarkInput').value = v.landmark || '';
     if (v.hasVoiceNote && !$('voiceStatus').textContent) $('voiceStatus').textContent = t.voiceSaved;
     if (v.can.editDelivery) initMap(v.dropoffLocation);
+
+    show('riderCard', !!v.rider);
+    if (v.rider) {
+      $('riderName').textContent = v.rider.firstName;
+      $('riderMeta').textContent = `${v.rider.plateNumber} · ${v.rider.riderCode}`;
+      $('riderVerify').textContent = t.riderVerify(v.rider.riderCode);
+      if (v.rider.hasPhoto && $('riderPhoto').dataset.code !== v.rider.riderCode) {
+        $('riderPhoto').dataset.code = v.rider.riderCode;
+        fetch(`/api/checkout/${encodeURIComponent(orderId)}/rider-photo`, { headers: { 'X-Buyer-Token': token || '' } })
+          .then((r) => (r.ok ? r.blob() : null))
+          .then((b) => { if (b) { $('riderPhoto').src = URL.createObjectURL(b); $('riderPhoto').alt = v.rider.firstName; show('riderPhoto', true); } })
+          .catch(() => {});
+      }
+    }
 
     show('disputeBtn', v.can.dispute);
     const ol = $('timeline');

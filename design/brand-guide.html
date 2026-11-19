@@ -1,0 +1,425 @@
+<title>BayamSafe Brand Book</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: a single editorial column (max 1120px) that alternates sand and night-forest bands; the ridge line ties sections together. */
+:root {
+  --bg: #F7F4EC;
+  --surface: #FFFFFF;
+  --ink: #12201A;
+  --muted: #56675C;
+  --line: #DCD6C6;
+  --fako: #0B6B3A;
+  --forest: #074A28;
+  --gold: #F2B705;
+  --laterite: #B8461F;
+  --night: #0F1A14;
+  --night-ink: #F1EEE4;
+  --night-muted: #A9B8AD;
+  --display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+  --body: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F1A14; --surface: #16241C; --ink: #F1EEE4; --muted: #A9B8AD; --line: #2A3B31;
+    --fako: #2FA36A; --forest: #1E7F4E; --laterite: #E07A50; --night: #08110C; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0F1A14; --surface: #16241C; --ink: #F1EEE4; --muted: #A9B8AD; --line: #2A3B31;
+  --fako: #2FA36A; --forest: #1E7F4E; --laterite: #E07A50; --night: #08110C; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+section { padding-block: 88px; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.05; text-wrap: balance; margin: 0; letter-spacing: -0.02em; }
+h2 { font-size: clamp(34px, 5vw, 56px); font-weight: 800; }
+h3 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+p { margin: 0; max-width: 65ch; }
+.eyebrow { font-family: var(--mono); font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fako); font-weight: 600; }
+.lede { font-size: 19px; color: var(--muted); margin-top: 16px; }
+.head { display: grid; gap: 12px; margin-bottom: 48px; }
+.grid { display: grid; gap: 24px; }
+.night { background: var(--night); color: var(--night-ink); }
+.night .eyebrow { color: var(--gold); }
+.night .lede, .night .muted { color: var(--night-muted); }
+.muted { color: var(--muted); }
+svg { display: block; }
+.mono { font-family: var(--mono); }
+
+/* Hero */
+.hero { padding-block: 56px 0; background: var(--night); color: var(--night-ink); overflow: hidden; }
+.hero-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.lockup { display: flex; align-items: center; gap: 14px; font-family: var(--display); font-weight: 800; font-size: 28px; letter-spacing: -0.02em; }
+.lockup .s { color: var(--gold); }
+.version { font-family: var(--mono); font-size: 13px; color: var(--night-muted); }
+.hero h1 { font-size: clamp(48px, 9vw, 112px); font-weight: 800; margin-top: 72px; max-width: 12ch; }
+.hero h1 em { font-style: normal; color: var(--gold); }
+.hero .lede { color: var(--night-muted); max-width: 52ch; }
+.hero-ridge { margin-top: 40px; width: 100%; height: auto; }
+
+/* Story */
+.traits { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.trait { border-top: 3px solid var(--ink); padding-top: 16px; display: grid; gap: 8px; }
+.trait .fr { font-family: var(--display); font-size: 30px; font-weight: 800; }
+.trait .en { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+
+/* Logo */
+.logo-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.tile { border-radius: 20px; padding: 32px; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.tile.light { background: #F7F4EC; color: #12201A; border: 1px solid var(--line); }
+.tile.dark { background: #0F1A14; color: #F1EEE4; }
+.tile.green { background: #0B6B3A; color: #F7F4EC; }
+.tile .cap { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; }
+.construct { position: relative; }
+.rules { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 24px; }
+.rule { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px; display: grid; gap: 12px; }
+.rule .verdict { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.rule .no { color: var(--laterite); }
+.rule .yes { color: var(--fako); }
+.rule .stage { height: 120px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: #F7F4EC; overflow: hidden; }
+
+/* Color */
+.swatches { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.swatch { border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); display: grid; }
+.chip { height: 150px; padding: 16px; display: flex; align-items: flex-end; font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.swatch .meta { padding: 16px; display: grid; gap: 4px; }
+.swatch .name { font-family: var(--display); font-size: 20px; font-weight: 700; }
+.swatch .use { font-size: 14px; color: var(--muted); }
+.swatch .hex { font-family: var(--mono); font-size: 13px; }
+.ratio { display: flex; height: 40px; border-radius: 10px; overflow: hidden; margin-top: 24px; border: 1px solid var(--line); }
+.ratio span { display: flex; align-items: center; padding-left: 10px; font-family: var(--mono); font-size: 11px; font-weight: 600; }
+
+/* Type */
+.type-row { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 24px; padding-block: 28px; border-top: 1px solid var(--line); align-items: baseline; }
+.type-row:last-child { border-bottom: 1px solid var(--line); }
+.type-row .label { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+.sample-display { font-family: var(--display); font-size: clamp(40px, 7vw, 80px); font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
+.sample-body { font-size: 18px; max-width: 60ch; }
+.sample-mono { font-family: var(--mono); font-size: clamp(28px, 5vw, 44px); font-weight: 600; letter-spacing: 0.04em; }
+
+/* Ridge */
+.ridge-figure { background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 28px; }
+.ridge-steps { list-style: none; padding: 0; margin: 20px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; counter-reset: step; }
+.ridge-steps li { counter-increment: step; display: grid; gap: 4px; font-size: 14px; }
+.ridge-steps li::before { content: counter(step, decimal-leading-zero); font-family: var(--mono); font-size: 12px; color: var(--fako); font-weight: 600; }
+.ridge-steps b { font-family: var(--display); font-size: 17px; }
+.ridge-uses { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-top: 24px; }
+
+/* Voice */
+.voice-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.say { border-radius: 18px; padding: 24px; display: grid; gap: 14px; background: #16241C; }
+.say .tag { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.say .yes { color: #6FD39C; }
+.say .no { color: #F0A07E; }
+.say blockquote { margin: 0; font-size: 17px; line-height: 1.5; }
+.say .tr { font-size: 14px; color: var(--night-muted); }
+
+/* Applications */
+.apps { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+.app { display: grid; gap: 12px; min-width: 0; }
+.app .cap { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+.tg { background: #DCE8D9; border-radius: 20px; padding: 20px; }
+.bubble { background: #FFFFFF; color: #12201A; border-radius: 16px 16px 16px 4px; padding: 14px 16px; font-size: 15px; line-height: 1.5; box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
+.bubble b { font-weight: 600; }
+.tg-btn { margin-top: 8px; background: #FFFFFF; color: #0B6B3A; border-radius: 12px; text-align: center; padding: 10px; font-weight: 600; font-size: 14px; }
+.plaque { background: #0F1A14; color: #F1EEE4; border-radius: 22px; padding: 28px; text-align: center; display: grid; gap: 10px; }
+.plaque .digits { display: flex; justify-content: center; gap: 10px; }
+.plaque .digits span { width: 54px; height: 68px; border-radius: 12px; background: #16241C; border: 1px solid #2A3B31; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 34px; font-weight: 600; color: #F2B705; }
+.plaque .warn { font-size: 13px; color: #A9B8AD; }
+.sticker { aspect-ratio: 1; max-width: 300px; width: 100%; border-radius: 50%; background: #0B6B3A; color: #F7F4EC; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; padding: 32px; border: 8px solid #F2B705; justify-self: center; }
+.sticker .big { font-family: var(--display); font-weight: 800; font-size: 26px; line-height: 1.05; }
+.sticker .small { font-size: 13px; opacity: 0.9; }
+.badge { background: #F7F4EC; color: #12201A; border-radius: 22px; overflow: hidden; border: 1px solid var(--line); max-width: 340px; width: 100%; justify-self: center; }
+.badge .top { background: #0B6B3A; color: #F7F4EC; padding: 14px 18px; display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 800; font-size: 18px; }
+.badge .body { padding: 18px; display: grid; grid-template-columns: 96px 1fr; gap: 16px; align-items: center; }
+.badge .photo { width: 96px; height: 120px; border-radius: 12px; background: repeating-linear-gradient(135deg, #E6E0D0 0 8px, #EFEADD 8px 16px); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #56675C; text-align: center; padding: 6px; }
+.badge .nm { font-family: var(--display); font-size: 20px; font-weight: 700; line-height: 1.1; }
+.badge .k { font-family: var(--mono); font-size: 11px; color: #56675C; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 8px; }
+.badge .v { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+.badge .foot { border-top: 1px dashed #DCD6C6; padding: 12px 18px; font-size: 12px; color: #56675C; display: flex; justify-content: space-between; gap: 8px; }
+.wa { background: #E7F0E5; border-radius: 18px; padding: 16px; }
+.wa-card { background: #FFFFFF; color: #12201A; border-radius: 12px; overflow: hidden; }
+.wa-card .bar { background: #0F1A14; padding: 18px; display: flex; align-items: center; gap: 12px; color: #F1EEE4; font-family: var(--display); font-weight: 800; font-size: 20px; }
+.wa-card .txt { padding: 12px 14px; font-size: 14px; display: grid; gap: 2px; }
+.wa-card .url { font-size: 12px; color: #56675C; }
+
+footer { padding-block: 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+@media (max-width: 560px) {
+  section { padding-block: 64px; }
+  .type-row { grid-template-columns: 1fr; gap: 8px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .draw { stroke-dasharray: 1400; stroke-dashoffset: 1400; animation: draw 2.4s 0.3s cubic-bezier(.6,.1,.2,1) forwards; }
+  .sun { opacity: 0; animation: rise 0.8s 2.4s ease-out forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="mark" viewBox="0 0 200 200">
+    <path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="#12201A" stroke-width="16" stroke-linecap="round"></path>
+    <rect x="40" y="88" width="120" height="94" rx="24" fill="#0B6B3A"></rect>
+    <polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon>
+  </symbol>
+  <symbol id="mark-rev" viewBox="0 0 200 200">
+    <path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="#F1EEE4" stroke-width="16" stroke-linecap="round"></path>
+    <rect x="40" y="88" width="120" height="94" rx="24" fill="#12924F"></rect>
+    <polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon>
+  </symbol>
+  <symbol id="mark-mono" viewBox="0 0 200 200">
+    <path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round"></path>
+    <rect x="40" y="88" width="120" height="94" rx="24" fill="currentColor"></rect>
+    <polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#0B6B3A"></polygon>
+  </symbol>
+</svg>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-top">
+      <div class="lockup"><svg width="44" height="44" aria-hidden="true"><use href="#mark-rev"></use></svg><span>Bayam<span class="s">Safe</span></span></div>
+      <span class="version">Brand book · v1 · Nov 2026</span>
+    </div>
+    <h1>L’argent attend. <em>Le colis arrive.</em></h1>
+    <p class="lede" style="margin-top:20px">Money waits. The parcel arrives. That one promise is the whole brand: BayamSafe holds the buyer’s money until the parcel is in their hands, so sellers and buyers who have never met can trade with confidence.</p>
+  </div>
+  <svg class="hero-ridge" viewBox="0 0 1200 220" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 220 L0 190 L180 150 L300 172 L470 96 L560 120 L640 104 L760 40 L860 82 L1000 64 L1200 120 L1200 220 Z" fill="#074A28"></path>
+    <path class="draw" d="M0 190 L180 150 L300 172 L470 96 L560 120 L640 104 L760 40" fill="none" stroke="#F2B705" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"></path>
+    <g transform="translate(660 -90)"><polygon class="sun" points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon></g>
+  </svg>
+</header>
+
+<main>
+  <section>
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Who we are</span>
+        <h2>Built for the bayam-sellam</h2>
+        <p class="lede">Bayam-sellam are the traders who buy here and sell there; they keep Cameroon’s markets moving. Today they sell on WhatsApp, TikTok and Facebook, and every sale starts with the same doubt: will the money come, will the parcel come? We exist to remove that doubt. Everything we make should feel like a firm handshake at Mokolo market: solid, warm, plain-spoken, proud.</p>
+      </div>
+      <div class="grid traits">
+        <div class="trait"><span class="fr">Solide</span><span class="en">Solid</span><p class="muted">Money is serious. We never joke about it, never blur numbers, always say exactly where the funds are.</p></div>
+        <div class="trait"><span class="fr">Chaleureux</span><span class="en">Warm</span><p class="muted">We speak like a trusted cousin in the trade, not a bank. Short sentences, real words, a little smile.</p></div>
+        <div class="trait"><span class="fr">Clair</span><span class="en">Clear</span><p class="muted">Every screen answers one question: what happens to my money now? If it needs a manual, we redesign it.</p></div>
+        <div class="trait"><span class="fr">Fier</span><span class="en">Proud</span><p class="muted">Made in Cameroon for Cameroon. Our references are ours: Fako, the market basket, the morning sun over Buea.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="night">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">The mark</span>
+        <h2>Star Lock</h2>
+        <p class="lede">A padlock whose keyhole is the gold star of the Cameroonian flag. It explains escrow without a word: the money is locked, and only the right key opens it. The star says whose lock it is. It is the simplest mark we could make, so it stays readable from a shop sign down to a 16 px browser tab.</p>
+      </div>
+      <div class="grid logo-grid">
+        <div class="tile light">
+          <span class="cap">Primary · on sand</span>
+          <div class="lockup" style="font-size:34px"><svg width="64" height="64" role="img" aria-label="BayamSafe mark"><use href="#mark"></use></svg><span>Bayam<span style="color:#0B6B3A">Safe</span></span></div>
+        </div>
+        <div class="tile dark">
+          <span class="cap">Reversed · on night forest</span>
+          <div class="lockup" style="font-size:34px"><svg width="64" height="64" aria-hidden="true"><use href="#mark-rev"></use></svg><span>Bayam<span style="color:#F2B705">Safe</span></span></div>
+        </div>
+        <div class="tile green">
+          <span class="cap">Mono · one colour print, stamps, embroidery</span>
+          <div class="lockup" style="font-size:34px;color:#F7F4EC"><svg width="64" height="64" aria-hidden="true" style="color:#F7F4EC"><use href="#mark-mono"></use></svg><span>BayamSafe</span></div>
+        </div>
+      </div>
+      <div class="grid logo-grid" style="margin-top:24px">
+        <div class="tile dark" style="border:1px solid #2A3B31">
+          <span class="cap">Construction</span>
+          <svg viewBox="0 0 220 220" width="100%" style="max-width:260px" aria-label="Logo construction: shackle arc, body rectangle and star keyhole on a grid" role="img">
+            <g transform="translate(10 10)">
+              <line x1="100" y1="0" x2="100" y2="200" stroke="#3A5144" stroke-dasharray="4 4"></line>
+              <line x1="0" y1="135" x2="200" y2="135" stroke="#3A5144" stroke-dasharray="4 4"></line>
+              <circle cx="100" cy="70" r="36" fill="none" stroke="#3A5144" stroke-dasharray="4 4"></circle>
+              <circle cx="100" cy="128" r="22" fill="none" stroke="#3A5144" stroke-dasharray="4 4"></circle>
+              <use href="#mark-rev" width="200" height="200" opacity="0.92"></use>
+            </g>
+          </svg>
+          <p class="muted" style="font-size:14px">The body is 120 × 94 with a 24 corner radius. The shackle is a half circle of radius 36, drawn as thick as the star’s arms are long. The star sits on the body’s vertical axis, just above its centre, where a real keyhole would be.</p>
+        </div>
+        <div class="tile dark" style="border:1px solid #2A3B31">
+          <span class="cap">Clear space & minimum size</span>
+          <div style="display:flex;align-items:flex-end;gap:28px;flex-wrap:wrap">
+            <div style="padding:22px;outline:1px dashed #3A5144"><svg width="88" height="88" aria-hidden="true"><use href="#mark-rev"></use></svg></div>
+            <div style="display:grid;gap:6px;justify-items:center"><svg width="24" height="24" aria-hidden="true"><use href="#mark-rev"></use></svg><span class="mono" style="font-size:11px;color:#A9B8AD">24 px</span></div>
+            <div style="display:grid;gap:6px;justify-items:center"><svg width="16" height="16" aria-hidden="true"><use href="#mark-rev"></use></svg><span class="mono" style="font-size:11px;color:#A9B8AD">16 px</span></div>
+          </div>
+          <p class="muted" style="font-size:14px">Keep a quarter of the mark’s width clear on every side. The full mark holds down to 16 px. For one-colour printing (stamps, embroidery, rider vests), use the mono version with the star knocked out.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Using the mark</span>
+        <h2>Four rules</h2>
+      </div>
+      <div class="grid rules">
+        <div class="rule"><div class="stage"><svg width="80" height="80" aria-hidden="true"><use href="#mark"></use></svg></div><span class="verdict yes">Do</span><p style="font-size:15px">Use the full colour mark on sand or white, and the reversed lockup on night forest.</p></div>
+        <div class="rule"><div class="stage"><svg width="80" height="80" style="transform:rotate(-18deg)" aria-hidden="true"><use href="#mark"></use></svg></div><span class="verdict no">Don’t</span><p style="font-size:15px">Rotate or tilt it. A tilted lock looks forced open.</p></div>
+        <div class="rule"><div class="stage" style="background:#F2B705"><svg width="80" height="80" aria-hidden="true"><use href="#mark"></use></svg></div><span class="verdict no">Don’t</span><p style="font-size:15px">Put it on gold, or recolour the star. The star is always gold, or knocked out in one-colour use.</p></div>
+        <div class="rule"><div class="stage"><svg width="120" height="64" viewBox="0 0 200 200" preserveAspectRatio="none" aria-hidden="true"><use href="#mark"></use></svg></div><span class="verdict no">Don’t</span><p style="font-size:15px">Stretch, squash, add shadows, gradients or outlines.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Colour</span>
+        <h2>Five colours from one landscape</h2>
+        <p class="lede">Every colour is taken from the view at dawn on the road from Douala to Buea. Green leads, gold confirms, laterite warns.</p>
+      </div>
+      <div class="grid swatches">
+        <div class="swatch"><div class="chip" style="background:#0B6B3A;color:#F7F4EC">Primary</div><div class="meta"><span class="name">Vert Fako</span><span class="hex">#0B6B3A</span><span class="use">Primary actions, the logo, “money is safe” states.</span></div></div>
+        <div class="swatch"><div class="chip" style="background:#0F1A14;color:#F1EEE4">Ground</div><div class="meta"><span class="name">Forêt de Nuit</span><span class="hex">#0F1A14</span><span class="use">Dark surfaces, body text on light, the release-code plaque.</span></div></div>
+        <div class="swatch"><div class="chip" style="background:#F2B705;color:#12201A">Accent</div><div class="meta"><span class="name">Or du Matin</span><span class="hex">#F2B705</span><span class="use">Moments of confirmation: paid, delivered, the summit. Never for body text.</span></div></div>
+        <div class="swatch"><div class="chip" style="background:#F7F4EC;color:#12201A;border-bottom:1px solid #DCD6C6">Paper</div><div class="meta"><span class="name">Sable de Kribi</span><span class="hex">#F7F4EC</span><span class="use">Page background. Warmer than white, kinder on cheap phone screens.</span></div></div>
+        <div class="swatch"><div class="chip" style="background:#B8461F;color:#FFFFFF">Alert</div><div class="meta"><span class="name">Latérite</span><span class="hex">#B8461F</span><span class="use">Disputes, wrong codes, expiring links. The red earth of our roads.</span></div></div>
+      </div>
+      <div class="ratio" role="img" aria-label="Colour proportions: sand 55%, night forest 25%, green 14%, gold 4%, laterite 2%">
+        <span style="flex:55;background:#F7F4EC;color:#12201A">55%</span>
+        <span style="flex:25;background:#0F1A14;color:#F1EEE4">25%</span>
+        <span style="flex:14;background:#0B6B3A;color:#F7F4EC">14%</span>
+        <span style="flex:4;background:#F2B705;color:#12201A"></span>
+        <span style="flex:2;background:#B8461F"></span>
+      </div>
+      <p class="muted" style="font-size:14px;margin-top:10px">Proportion on a typical screen. Gold is rare on purpose, so that when it appears it means “done”.</p>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Typography</span>
+        <h2>Three voices</h2>
+      </div>
+      <div class="type-row"><span class="label">Display · Bricolage Grotesque 800</span><span class="sample-display">Vendez sans crainte.</span></div>
+      <div class="type-row"><span class="label">Body · Inter 400 / 600</span><p class="sample-body">Votre client paie par MTN MoMo ou Orange Money. L’argent reste bloqué chez BayamSafe jusqu’à ce qu’il reçoive le colis et donne son code au livreur.</p></div>
+      <div class="type-row"><span class="label">Numbers & codes · IBM Plex Mono 600</span><span class="sample-mono">26 500 FCFA · 8897</span></div>
+      <p class="muted" style="font-size:14px;margin-top:20px">Amounts and codes always use the mono face, so a 1 never passes for a 7 when a rider reads a code out loud at a gate.</p>
+    </div>
+  </section>
+
+  <section class="night">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Signature element</span>
+        <h2>La Ligne de Crête</h2>
+        <p class="lede">Every BayamSafe journey is a climb up Mount Cameroon. We draw order progress as the mountain’s ridge: each step is a waypoint, and the summit, marked by the gold star from our lock, is the moment the lock opens and the seller is paid. It turns a status bar into a story our users already know.</p>
+      </div>
+      <div class="ridge-figure" style="background:#16241C;border-color:#2A3B31">
+        <svg viewBox="0 0 1000 200" width="100%" role="img" aria-label="Order progress drawn as a mountain ridge with six waypoints, the last at the summit">
+          <path d="M0 200 L0 180 L170 150 L330 160 L500 110 L640 120 L820 52 L1000 90 L1000 200 Z" fill="#0B6B3A" opacity="0.35"></path>
+          <path d="M0 180 L170 150 L330 160 L500 110 L640 120 L820 52" fill="none" stroke="#F2B705" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M820 52 L1000 90" fill="none" stroke="#3A5144" stroke-width="5" stroke-linecap="round" stroke-dasharray="2 12"></path>
+          <g fill="#0F1A14" stroke="#F2B705" stroke-width="4">
+            <circle cx="20" cy="176" r="9"></circle><circle cx="170" cy="150" r="9"></circle><circle cx="330" cy="160" r="9"></circle><circle cx="500" cy="110" r="9"></circle><circle cx="640" cy="120" r="9"></circle>
+          </g>
+          <polygon transform="translate(820 52) scale(1.25) translate(-100 -130)" points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon>
+        </svg>
+        <ol class="ridge-steps">
+          <li><b>Lien envoyé</b><span class="muted">Link sent</span></li>
+          <li><b>Argent bloqué</b><span class="muted">Money locked</span></li>
+          <li><b>Livreur en route</b><span class="muted">Rider on the way</span></li>
+          <li><b>Colis récupéré</b><span class="muted">Parcel picked up</span></li>
+          <li><b>Code donné</b><span class="muted">Code given</span></li>
+          <li><b>Vendeur payé</b><span class="muted">Seller paid</span></li>
+        </ol>
+      </div>
+      <div class="grid ridge-uses">
+        <p class="muted">On the checkout page it replaces the status badge. In the bot, a short ridge sticker marks each step. On the landing page it draws itself as you scroll.</p>
+        <p class="muted">The line is always gold up to the current step, then dotted. Waypoints are rings; the summit is a filled sun. Never draw it going downhill.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">Voice</span>
+        <h2>How we sound</h2>
+        <p class="lede">French first, English always available. Plain words a market trader uses. Say where the money is in every message about money.</p>
+      </div>
+      <div class="grid voice-grid" style="color:#F1EEE4">
+        <div class="say"><span class="tag yes">We say</span><blockquote>“Votre argent est bloqué chez BayamSafe. Le vendeur ne le reçoit qu’après votre code.”</blockquote><span class="tr">Your money is held by BayamSafe. The seller only gets it after your code.</span></div>
+        <div class="say"><span class="tag no">Not</span><blockquote>“Transaction escrow initiée avec succès via notre infrastructure sécurisée.”</blockquote><span class="tr">Jargon. Nobody at the market talks like this.</span></div>
+        <div class="say"><span class="tag yes">We say</span><blockquote>“Code incorrect. Il vous reste 2 essais.”</blockquote><span class="tr">Wrong code. You have 2 tries left.</span></div>
+        <div class="say"><span class="tag no">Not</span><blockquote>“Oups ! 😅 Une erreur est survenue…”</blockquote><span class="tr">Vague, and jokey about money.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="head">
+        <span class="eyebrow">In the world</span>
+        <h2>Applications</h2>
+      </div>
+      <div class="grid apps">
+        <div class="app">
+          <span class="cap">Telegram · rider job offer</span>
+          <div class="tg">
+            <div class="bubble"><b>🆕 Nouvelle course</b><br>📦 Robe wax taille M<br>📍 Marché Akwa · 1,2 km<br>💵 Vous gagnez : <b class="mono">1 500 FCFA</b></div>
+            <div class="tg-btn">✅ Accepter</div>
+          </div>
+        </div>
+        <div class="app">
+          <span class="cap">Checkout · release code plaque</span>
+          <div class="plaque">
+            <span class="mono" style="font-size:12px;letter-spacing:0.14em;color:#A9B8AD">VOTRE CODE DE LIBÉRATION</span>
+            <div class="digits"><span>8</span><span>8</span><span>9</span><span>7</span></div>
+            <span class="warn">Donnez-le au livreur seulement après avoir vérifié le colis.</span>
+          </div>
+        </div>
+        <div class="app">
+          <span class="cap">Window sticker for verified shops</span>
+          <div class="sticker">
+            <svg width="64" height="64" aria-hidden="true" style="color:#F7F4EC"><use href="#mark-mono"></use></svg>
+            <span class="big">Ici, payez<br>sans crainte</span>
+            <span class="small">Vendeur vérifié BayamSafe</span>
+          </div>
+        </div>
+        <div class="app">
+          <span class="cap">Rider ID badge</span>
+          <div class="badge">
+            <div class="top"><svg width="26" height="26" aria-hidden="true" style="color:#F7F4EC"><use href="#mark-mono"></use></svg>Livreur BayamSafe</div>
+            <div class="body">
+              <div class="photo">[Rider photo]</div>
+              <div><div class="nm">[Rider name]</div><div class="k">Plate</div><div class="v">LT-000-AA</div><div class="k">Rider ID</div><div class="v">BSR-0000</div></div>
+            </div>
+            <div class="foot"><span>Douala</span><span>Verify: bot → /verify BSR-0000</span></div>
+          </div>
+        </div>
+        <div class="app">
+          <span class="cap">WhatsApp link preview</span>
+          <div class="wa">
+            <div class="wa-card">
+              <div class="bar"><svg width="34" height="34" aria-hidden="true"><use href="#mark-rev"></use></svg>Paiement protégé</div>
+              <div class="txt"><b>Robe wax taille M · 21 500 FCFA</b><span>Votre argent reste bloqué jusqu’à la livraison.</span><span class="url">bayamsafe.cm</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap" style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <span>BayamSafe brand book · v1</span>
+    <span>Logo: Star Lock</span>
+  </div>
+</footer>

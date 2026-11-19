@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>BayamSafe · Poste de contrôle</title>
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+/* Layout: control-room UI. Sidebar + work area; everything scans in one glance, actions sit next to what they act on. */
+:root {
+  --bg: #0B140F; --panel: #121F18; --panel-2: #17271F; --line: #24372C; --ink: #EEF2EC; --muted: #93A79A; --faint: #5F7468;
+  --fako: #12924F; --fako-ink: #6FD39C; --gold: #F2B705; --laterite: #E07A50; --sky: #7CB8E8;
+  --display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif; --body: 'Inter', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: -0.02em; line-height: 1.1; }
+[hidden] { display: none !important; }
+
+/* Login */
+.login { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+.login form { width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 32px; display: grid; gap: 18px; }
+.login h1 { font-size: 30px; }
+.field { display: grid; gap: 6px; }
+.field label { font-size: 13px; color: var(--muted); font-weight: 500; }
+.input { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 0 14px; min-height: 44px; width: 100%; }
+textarea.input { padding: 10px 14px; min-height: 70px; resize: vertical; }
+.btn { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); padding: 0 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; justify-content: center; white-space: nowrap; }
+.btn:hover { border-color: var(--faint); }
+.btn.primary { background: var(--fako); border-color: var(--fako); color: #fff; }
+.btn.gold { background: var(--gold); border-color: var(--gold); color: #12201A; }
+.btn.danger { border-color: #6B3624; color: #F4B39A; background: #2A1A13; }
+.btn.small { min-height: 32px; padding: 0 10px; font-size: 13px; }
+.err { color: #F4B39A; font-size: 13px; min-height: 18px; }
+
+/* Shell */
+.shell { display: flex; flex-wrap: wrap; min-height: 100%; }
+.side { flex: 1 1 220px; max-width: 260px; background: var(--panel); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 22px; padding-left: max(14px, env(safe-area-inset-left, 0px)); }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 800; font-size: 19px; padding: 0 6px; }
+.brand small { display: block; font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; }
+.nav { display: grid; gap: 4px; }
+.nav a { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 10px; color: var(--muted); text-decoration: none; font-weight: 500; min-height: 42px; }
+.nav a:hover { background: var(--panel-2); color: var(--ink); }
+.nav a.on { background: var(--panel-2); color: var(--ink); box-shadow: inset 3px 0 0 var(--gold); }
+.badge { font-family: var(--mono); font-size: 11px; font-weight: 600; background: var(--gold); color: #12201A; border-radius: 999px; padding: 1px 8px; }
+.badge.alert { background: var(--laterite); color: #12201A; }
+.side-foot { margin-top: auto; display: grid; gap: 8px; font-size: 12px; color: var(--faint); }
+.main { flex: 999 1 560px; min-width: 0; padding: 24px 28px 64px; padding-right: max(28px, env(safe-area-inset-right, 0px)); }
+.topline { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+.topline h1 { font-size: 30px; }
+.sub { color: var(--muted); font-size: 13px; }
+@media (max-width: 820px) {
+  .side { max-width: none; flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--line); gap: 12px; padding: 12px 16px; }
+  .nav { display: flex; overflow-x: auto; }
+  .nav a { white-space: nowrap; flex: none; }
+  .side-foot { display: none; }
+  .main { padding: 18px 16px 48px; }
+}
+
+/* Cards & grids */
+.grid { display: grid; gap: 16px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 18px; min-width: 0; }
+.kpi .lbl { color: var(--muted); font-size: 13px; }
+.kpi .val { font-family: var(--mono); font-size: 26px; font-weight: 600; margin-top: 6px; }
+.kpi .val small { font-size: 13px; color: var(--muted); margin-left: 4px; }
+.kpi.hero { background: linear-gradient(160deg, #0F3A24, var(--panel) 70%); border-color: #1D5A39; }
+.kpi.hero .val { color: var(--gold); }
+.queues { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 16px; }
+.queue { display: flex; justify-content: space-between; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+.queue:hover { border-color: var(--faint); }
+.queue .n { font-family: var(--mono); font-size: 28px; font-weight: 600; }
+.queue.hot .n { color: var(--gold); }
+.queue.alert .n { color: var(--laterite); }
+.section-title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 28px 0 12px; }
+.section-title h2 { font-size: 20px; }
+.two { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+@media (max-width: 1100px) { .two { grid-template-columns: 1fr; } }
+
+/* Charts */
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 160px; padding-top: 10px; }
+.bars .b { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; height: 100%; justify-content: flex-end; }
+.bars .bar { width: 100%; max-width: 28px; background: var(--fako); border-radius: 6px 6px 2px 2px; min-height: 2px; position: relative; }
+.bars .bar.today { background: var(--gold); }
+.bars .d { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.bars .v { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.ridge-wrap { overflow-x: auto; }
+.ridge-legend { display: grid; grid-template-columns: repeat(6, minmax(90px, 1fr)); gap: 8px; margin-top: 8px; min-width: 560px; }
+.ridge-legend div { font-size: 12px; color: var(--muted); }
+.ridge-legend b { display: block; font-family: var(--mono); font-size: 18px; color: var(--ink); }
+
+/* Tables */
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.chip { min-height: 34px; border-radius: 999px; border: 1px solid var(--line); background: transparent; padding: 0 12px; font-size: 13px; color: var(--muted); }
+.chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.table-box { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+table { width: 100%; border-collapse: collapse; min-width: 720px; }
+th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; background: var(--panel-2); position: sticky; top: 0; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--panel-2); }
+td.r, th.r { text-align: right; }
+.empty { padding: 40px; text-align: center; color: var(--muted); }
+
+.pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--fako-ink); border-color: #1D5A39; }
+.pill.wait { color: var(--gold); border-color: #5C4A0E; }
+.pill.bad { color: var(--laterite); border-color: #6B3624; }
+.pill.info { color: var(--sky); border-color: #26445C; }
+
+/* Verification */
+.vgrid { grid-template-columns: repeat(auto-fill, minmax(min(520px, 100%), 1fr)); }
+.vcard { display: grid; gap: 14px; }
+.vhead { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.vhead h3 { font-size: 20px; }
+.facematch { position: relative; aspect-ratio: 4 / 3; border-radius: 14px; overflow: hidden; background: #000; }
+.facematch img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.facematch .top { clip-path: inset(0 50% 0 0); }
+.facematch .divider { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--gold); left: 50%; pointer-events: none; }
+.facematch .tag { position: absolute; top: 10px; font-family: var(--mono); font-size: 11px; background: rgba(0,0,0,.65); padding: 3px 8px; border-radius: 6px; }
+.facematch .tag.l { left: 10px; } .facematch .tag.r { right: 10px; }
+.fm-range { width: 100%; accent-color: var(--gold); }
+.thumbs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.thumb { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--panel-2); border: 1px solid var(--line); position: relative; padding: 0; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb span { position: absolute; left: 6px; bottom: 6px; font-size: 10px; font-family: var(--mono); background: rgba(0,0,0,.7); padding: 1px 6px; border-radius: 4px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.fact { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
+.fact .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.fact .v { font-weight: 600; word-break: break-word; }
+.mini-map { height: 160px; border-radius: 12px; overflow: hidden; }
+.decide { display: grid; gap: 8px; }
+.decide .row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Drawer */
+.drawer-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 40; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(640px, 100%); background: var(--panel); border-left: 1px solid var(--line); z-index: 41; overflow-y: auto; padding: 24px; padding-top: max(24px, env(safe-area-inset-top, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); display: grid; gap: 18px; align-content: start; }
+.drawer h2 { font-size: 24px; }
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; }
+.kv .k { color: var(--muted); }
+.kv .v { text-align: right; font-family: var(--mono); }
+.timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; border-left: 2px solid var(--line); padding-left: 16px; }
+.timeline li { position: relative; }
+.timeline li::before { content: ""; position: absolute; left: -22px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--gold); }
+.timeline .when { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.payout { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line); }
+#map { height: calc(100vh - 170px); min-height: 420px; border-radius: 18px; border: 1px solid var(--line); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.toast { position: fixed; bottom: max(20px, env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-weight: 600; z-index: 60; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--ink); }
+.health { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) { .bars .bar { transition: height .5s ease; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="mark" viewBox="0 0 200 200">
+    <path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="#F1EEE4" stroke-width="16" stroke-linecap="round"></path>
+    <rect x="40" y="88" width="120" height="94" rx="24" fill="#12924F"></rect>
+    <polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon>
+  </symbol>
+</svg>
+
+<section class="login" id="login" hidden>
+  <form id="loginForm">
+    <div class="brand"><svg width="40" height="40" aria-hidden="true"><use href="#mark"></use></svg><div>BayamSafe<small>Poste de contrôle</small></div></div>
+    <h1>Connexion admin</h1>
+    <div class="field">
+      <label for="keyInput">Clé admin (ADMIN_API_KEY)</label>
+      <input class="input mono" id="keyInput" type="password" autocomplete="current-password" required>
+    </div>
+    <div class="err" id="loginErr" role="alert"></div>
+    <button class="btn primary" type="submit">Entrer</button>
+    <p class="sub">La clé reste dans cet onglet uniquement et disparaît à sa fermeture.</p>
+  </form>
+</section>
+
+<div class="shell" id="shell" hidden>
+  <aside class="side">
+    <div class="brand"><svg width="34" height="34" aria-hidden="true"><use href="#mark"></use></svg><div>BayamSafe<small>Poste de contrôle</small></div></div>
+    <nav class="nav" aria-label="Sections">
+      <a href="#overview" data-view="overview">Vue d’ensemble</a>
+      <a href="#verify" data-view="verify">Vérifications <span class="badge" id="navVerify" hidden></span></a>
+      <a href="#orders" data-view="orders">Commandes <span class="badge alert" id="navDisputes" hidden></span></a>
+      <a href="#live" data-view="live">Carte en direct</a>
+      <a href="#riders" data-view="riders">Livreurs</a>
+      <a href="#sellers" data-view="sellers">Vendeurs</a>
+      <a href="#money" data-view="money">Argent</a>
+    </nav>
+    <div class="side-foot">
+      <span id="envLine"></span>
+      <button class="btn small" id="logoutBtn" type="button">Se déconnecter</button>
+    </div>
+  </aside>
+  <main class="main" id="main" aria-live="polite"></main>
+</div>
+
+<script>
+(() => {
+  // ------------------------------------------------------------------ helpers
+  const KEY = 'bs_admin_key';
+  const ss = { get: () => { try { return sessionStorage.getItem(KEY); } catch { return null; } }, set: (v) => { try { sessionStorage.setItem(KEY, v); } catch {} }, del: () => { try { sessionStorage.removeItem(KEY); } catch {} } };
+  let key = ss.get();
+  const $ = (s, root = document) => root.querySelector(s);
+
+  /** Tiny DOM builder: every string becomes a text node, so nothing user-supplied is parsed as HTML. */
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k === 'style') el.style.cssText = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else if (k === 'text') el.textContent = v;
+      else el.setAttribute(k, v === true ? '' : v);
+    }
+    for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+    return el;
+  }
+  const fcfa = (n) => `${Math.round(n || 0).toLocaleString('fr-FR')} FCFA`;
+  const when = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
+  const ago = (iso) => {
+    if (!iso) return '—';
+    const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    return m < 1 ? 'à l’instant' : m < 60 ? `il y a ${m} min` : m < 1440 ? `il y a ${Math.round(m / 60)} h` : `il y a ${Math.round(m / 1440)} j`;
+  };
+  function toast(msg) {
+    const t = h('div', { class: 'toast', role: 'status', text: msg });
+    document.body.append(t);
+    setTimeout(() => t.remove(), 2600);
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch('/api/admin' + path, {
+      method: opts.method || 'GET',
+      headers: Object.assign({ Authorization: 'Bearer ' + key }, opts.body ? { 'Content-Type': 'application/json' } : {}),
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    if (res.status === 403) { logout('Clé refusée.'); throw new Error('forbidden'); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `Erreur ${res.status}`);
+    return data;
+  }
+  /** Documents need the admin key, so they are fetched as blobs rather than plain <img src>. */
+  const blobCache = new Map();
+  async function fileUrl(fileId) {
+    if (!fileId) return null;
+    if (blobCache.has(fileId)) return blobCache.get(fileId);
+    const p = fetch('/api/admin/files/' + encodeURIComponent(fileId), { headers: { Authorization: 'Bearer ' + key } })
+      .then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null);
+    blobCache.set(fileId, p);
+    return p;
+  }
+  function img(fileId, alt, cls) {
+    const el = h('img', { alt, class: cls, loading: 'lazy' });
+    fileUrl(fileId).then((u) => { if (u) el.src = u; else el.replaceWith(h('div', { class: 'empty', style: 'padding:12px;font-size:12px', text: fileId ? 'Image indisponible' : 'Manquante' })); });
+    return el;
+  }
+
+  const STATUS = {
+    PENDING_PAYMENT: ['En attente de paiement', 'wait'], AWAITING_RIDER: ['Recherche livreur', 'info'], RIDER_ASSIGNED: ['Livreur assigné', 'info'],
+    IN_TRANSIT: ['En route', 'info'], AT_AGENCY: ['À l’agence', 'info'], AT_DESTINATION_HUB: ['Arrivé en ville', 'info'], LAST_MILE_ASSIGNED: ['Livreur local', 'info'],
+    OUT_FOR_DELIVERY: ['En livraison', 'info'], DELIVERED: ['Livré · paiements', 'wait'], SETTLED: ['Terminé', 'ok'], DISPUTED: ['Litige', 'bad'],
+    REFUNDED: ['Remboursé', ''], CANCELLED: ['Annulé', ''], EXPIRED: ['Expiré', '']
+  };
+  const pill = (status, map = STATUS) => { const [label, tone] = map[status] || [status, '']; return h('span', { class: 'pill ' + tone, text: label }); };
+  const PEOPLE = { NONE: ['À compléter', ''], PENDING: ['À vérifier', 'wait'], VERIFIED: ['Vérifié', 'ok'], REJECTED: ['Refusé', 'bad'], APPROVED: ['Approuvé', 'ok'], SUSPENDED: ['Suspendu', 'bad'] };
+  const PAYOUT = { PENDING: ['En attente', 'wait'], SENDING: ['Envoi…', 'info'], SENT: ['Envoyé', 'ok'], FAILED: ['Échec · relance auto', 'bad'], NEEDS_REVIEW: ['À vérifier', 'bad'] };
+  const REASONS = ['Photos floues ou illisibles. Reprenez-les à la lumière, sans reflet.', 'Le selfie ne correspond pas à la pièce d’identité.', 'Informations incomplètes ou incohérentes avec les documents.'];
+
+  // ------------------------------------------------------------------ auth & routing
+  function logout(msg) {
+    ss.del(); key = null;
+    $('#shell').hidden = true; $('#login').hidden = false;
+    $('#loginErr').textContent = msg || '';
+  }
+  $('#logoutBtn').onclick = () => logout();
+  $('#loginForm').onsubmit = async (e) => {
+    e.preventDefault();
+    key = $('#keyInput').value.trim();
+    try { await api('/overview'); ss.set(key); boot(); }
+    catch (err) { if (err.message !== 'forbidden') $('#loginErr').textContent = err.message; }
+  };
+
+  const views = { overview, verify, orders, live, riders, sellers, money };
+  let refreshTimer = null;
+  function route() {
+    const v = (location.hash || '#overview').slice(1);
+    const fn = views[v] || overview;
+    document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.view === (views[v] ? v : 'overview')));
+    clearInterval(refreshTimer);
+    fn().catch((e) => { if (e.message !== 'forbidden') $('#main').replaceChildren(h('div', { class: 'card empty', text: e.message })); });
+  }
+  window.addEventListener('hashchange', route);
+
+  async function boot() {
+    $('#login').hidden = true; $('#shell').hidden = false;
+    fetch('/api/health').then((r) => r.json()).then((hl) => { $('#envLine').textContent = `${hl.env} · ${hl.storage} · paiements ${hl.payments}`; }).catch(() => {});
+    route();
+    refreshBadges();
+  }
+  async function refreshBadges() {
+    try {
+      const o = await api('/overview');
+      const v = o.queues.kycPending + o.queues.ridersPending;
+      $('#navVerify').hidden = !v; $('#navVerify').textContent = v;
+      $('#navDisputes').hidden = !o.queues.disputes; $('#navDisputes').textContent = o.queues.disputes;
+    } catch {}
+  }
+  const page = (title, sub, ...actions) =>
+    h('div', { class: 'topline' }, h('div', {}, h('h1', { text: title }), sub ? h('div', { class: 'sub', text: sub }) : null), h('div', { class: 'toolbar', style: 'margin:0' }, ...actions));
+
+  // ------------------------------------------------------------------ overview
+  async function overview() {
+    const o = await api('/overview');
+    const m = $('#main');
+    const max = Math.max(1, ...o.days.map((d) => d.orders));
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const pipeline = [
+      ['Payé, en attente', (o.byStatus.AWAITING_RIDER || 0)],
+      ['Livreur assigné', (o.byStatus.RIDER_ASSIGNED || 0) + (o.byStatus.LAST_MILE_ASSIGNED || 0)],
+      ['En route', (o.byStatus.IN_TRANSIT || 0) + (o.byStatus.OUT_FOR_DELIVERY || 0)],
+      ['Agence / ville', (o.byStatus.AT_AGENCY || 0) + (o.byStatus.AT_DESTINATION_HUB || 0)],
+      ['Livré, paiements', o.byStatus.DELIVERED || 0],
+      ['Terminé', o.byStatus.SETTLED || 0]
+    ];
+    m.replaceChildren(
+      page('Vue d’ensemble', `Basé sur les ${o.sampleSize} dernières commandes · actualisé ${new Date().toLocaleTimeString('fr-FR')}`, h('button', { class: 'btn small', onclick: route, text: 'Actualiser' })),
+      h('div', { class: 'grid kpis' },
+        h('div', { class: 'card kpi hero' }, h('div', { class: 'lbl', text: 'Argent sous clé (séquestre)' }), h('div', { class: 'val', text: fcfa(o.money.escrowHeld) })),
+        h('div', { class: 'card kpi' }, h('div', { class: 'lbl', text: 'Revenu BayamSafe' }), h('div', { class: 'val', text: fcfa(o.money.revenue) })),
+        h('div', { class: 'card kpi' }, h('div', { class: 'lbl', text: 'Ventes livrées (volume)' }), h('div', { class: 'val', text: fcfa(o.money.gmvCompleted) })),
+        h('div', { class: 'card kpi' }, h('div', { class: 'lbl', text: 'Cautions livreurs' }), h('div', { class: 'val', text: fcfa(o.money.riderFloat) }))
+      ),
+      h('div', { class: 'grid queues' },
+        queueCard('#verify', 'Vendeurs à vérifier', o.queues.kycPending, 'hot'),
+        queueCard('#verify', 'Livreurs à vérifier', o.queues.ridersPending, 'hot'),
+        queueCard('#orders?DISPUTED', 'Litiges ouverts', o.queues.disputes, 'alert'),
+        queueCard('#money', 'Paiements à vérifier', o.queues.payoutsNeedingReview, 'alert'),
+        queueCard('#live', 'Livreurs en service', `${o.fleet.onDuty}/${o.fleet.approved}`, '')
+      ),
+      h('div', { class: 'section-title' }, h('h2', { text: 'La montée des commandes' }), h('span', { class: 'sub', text: 'Où se trouvent les commandes en cours, du paiement au sommet' })),
+      h('div', { class: 'card ridge-wrap' }, ridgeSvg(pipeline), h('div', { class: 'ridge-legend' }, pipeline.map(([l, n]) => h('div', {}, h('b', { text: n }), l)))),
+      h('div', { class: 'grid two', style: 'margin-top:16px' },
+        h('div', { class: 'card' },
+          h('h3', { text: 'Commandes, 14 derniers jours', style: 'font-size:16px' }),
+          h('div', { class: 'bars', role: 'img', 'aria-label': 'Nombre de commandes par jour sur 14 jours' },
+            o.days.map((d) => h('div', { class: 'b' },
+              h('span', { class: 'v', text: d.orders || '' }),
+              h('div', { class: 'bar' + (d.day === todayKey ? ' today' : ''), style: `height:${(d.orders / max) * 100}%`, title: `${d.day} · ${d.orders} commandes · ${fcfa(d.gmv)} livrés` }),
+              h('span', { class: 'd', text: d.day.slice(8) })
+            ))
+          )
+        ),
+        h('div', { class: 'card' },
+          h('h3', { text: 'Toutes les commandes par statut', style: 'font-size:16px;margin-bottom:12px' }),
+          h('div', { class: 'kv' }, Object.entries(o.byStatus).sort((a, b) => b[1] - a[1]).flatMap(([s, n]) => [h('span', { class: 'k' }, pill(s)), h('span', { class: 'v', text: n })]))
+        )
+      )
+    );
+    refreshTimer = setInterval(() => { if (location.hash === '#overview' || !location.hash) overview().catch(() => {}); }, 30000);
+  }
+  function queueCard(href, label, n, tone) {
+    const hot = typeof n === 'number' ? n > 0 : false;
+    return h('a', { class: `card queue ${hot ? tone : ''}`, href: href.split('?')[0], onclick: () => { if (href.includes('?')) pendingFilter = href.split('?')[1]; } }, h('span', { text: label }), h('span', { class: 'n', text: n }));
+  }
+  function ridgeSvg(pipeline) {
+    const pts = [[20, 150], [190, 118], [370, 132], [560, 84], [740, 96], [940, 28]];
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 960 170'); svg.setAttribute('width', '100%'); svg.setAttribute('aria-hidden', 'true'); svg.style.minWidth = '560px';
+    const mk = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); svg.append(e); return e; };
+    mk('path', { d: `M0 170 L${pts.map((p) => p.join(' ')).join(' L')} L960 60 L960 170 Z`, fill: '#12924F', opacity: '0.22' });
+    mk('path', { d: `M${pts.map((p) => p.join(' ')).join(' L')}`, fill: 'none', stroke: '#F2B705', 'stroke-width': '4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+    const max = Math.max(1, ...pipeline.map((p) => p[1]));
+    pts.forEach(([x, y], i) => {
+      const r = 7 + (pipeline[i][1] / max) * 14;
+      mk('circle', { cx: x, cy: y, r, fill: i === 5 ? '#F2B705' : '#0B140F', stroke: '#F2B705', 'stroke-width': '3' });
+    });
+    return svg;
+  }
+
+  // ------------------------------------------------------------------ verification queue
+  async function verify() {
+    const [sellers, ridersList] = await Promise.all([api('/kyc'), api('/riders?status=PENDING')]);
+    const m = $('#main');
+    const cards = [
+      ...sellers.map((u) => vCard({
+        kind: 'seller', id: u.id, title: u.shopName, subtitle: `${u.fullName} · ${u.phone}`, submitted: u.kycSubmittedAt,
+        selfie: u.selfieFileId, idFront: u.cniFrontFileId, extra: [['Recto', u.cniFrontFileId], ['Verso', u.cniBackFileId], ['Selfie', u.selfieFileId], ['Boutique', u.shopPhotoFileId]],
+        facts: [['Ville', u.city], ['N° CNI', u.cniNumber], ['Inscrit', when(u.createdAt)], ['Langue', u.lang]], location: u.shopLocation
+      })),
+      ...ridersList.map((r) => vCard({
+        kind: 'rider', id: r.id, title: r.fullName, subtitle: `${r.phone} · ${r.riderCode}`, submitted: r.updatedAt,
+        selfie: r.selfieFileId, idFront: r.cniFrontFileId, extra: [['Recto', r.cniFrontFileId], ['Verso', r.cniBackFileId], ['Selfie', r.selfieFileId], ['Véhicule', r.vehiclePhotoFileId]],
+        facts: [['Ville', r.city], ['N° CNI', r.cniNumber], ['Véhicule', r.vehicleType], ['Plaque', r.plateNumber]]
+      }))
+    ];
+    m.replaceChildren(
+      page('Vérifications', `${sellers.length} vendeur(s) et ${ridersList.length} livreur(s) attendent une décision. Faites glisser le curseur pour comparer le selfie et la pièce d’identité.`),
+      cards.length ? h('div', { class: 'grid vgrid' }, cards) : h('div', { class: 'card empty', text: 'Rien à vérifier. La file est vide.' })
+    );
+    cards.forEach((c) => c._afterMount && c._afterMount());
+  }
+
+  function vCard(v) {
+    const top = img(v.selfie, 'Selfie', 'top');
+    const divider = h('div', { class: 'divider' });
+    const range = h('input', { type: 'range', min: '0', max: '100', value: '50', class: 'fm-range', 'aria-label': 'Comparer selfie et pièce d’identité' });
+    range.oninput = () => { top.style.clipPath = `inset(0 ${100 - range.value}% 0 0)`; divider.style.left = range.value + '%'; };
+    const note = h('textarea', { class: 'input', placeholder: 'Motif du refus (envoyé à la personne)', 'aria-label': 'Motif du refus' });
+    const mapBox = v.location ? h('div', { class: 'mini-map' }) : null;
+    const decide = async (approve) => {
+      const reason = note.value.trim();
+      if (!approve && !reason) { note.focus(); toast('Indiquez un motif de refus.'); return; }
+      try {
+        if (v.kind === 'seller') await api(`/users/${v.id}/kyc`, { method: 'POST', body: { approve, note: reason } });
+        else await api(`/riders/${v.id}/status`, { method: 'POST', body: { status: approve ? 'APPROVED' : 'REJECTED', note: reason } });
+        toast(approve ? 'Approuvé. La personne est prévenue sur Telegram.' : 'Refusé. Le motif a été envoyé.');
+        card.remove(); refreshBadges();
+      } catch (e) { toast(e.message); }
+    };
+    const card = h('article', { class: 'card vcard' },
+      h('div', { class: 'vhead' },
+        h('div', {}, h('h3', { text: v.title }), h('div', { class: 'sub', text: v.subtitle })),
+        h('div', { style: 'text-align:right' }, h('span', { class: 'pill wait', text: v.kind === 'seller' ? 'Vendeur' : 'Livreur' }), h('div', { class: 'sub', text: ago(v.submitted) }))
+      ),
+      h('div', { class: 'facematch' }, img(v.idFront, 'Pièce d’identité'), top, divider, h('span', { class: 'tag l', text: 'Selfie' }), h('span', { class: 'tag r', text: 'CNI' })),
+      range,
+      h('div', { class: 'thumbs' }, v.extra.map(([label, f]) => {
+        const b = h('button', { class: 'thumb', type: 'button', title: `Ouvrir ${label}`, onclick: async () => { const u = await fileUrl(f); if (u) window.open(u, '_blank'); } }, img(f, label), h('span', { text: label }));
+        return b;
+      })),
+      h('div', { class: 'facts' }, v.facts.map(([k, val]) => h('div', { class: 'fact' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: val || '—' })))),
+      mapBox,
+      h('div', { class: 'decide' },
+        h('div', { class: 'row' }, REASONS.map((r) => h('button', { class: 'chip', type: 'button', onclick: () => { note.value = r; }, text: r.split('.')[0] }))),
+        note,
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', onclick: () => decide(true), text: '✓ Approuver' }), h('button', { class: 'btn danger', type: 'button', onclick: () => decide(false), text: 'Refuser avec ce motif' }))
+      )
+    );
+    if (mapBox) card._afterMount = () => {
+      const map = L.map(mapBox, { zoomControl: false, attributionControl: false }).setView([v.location.lat, v.location.lng], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+      L.circleMarker([v.location.lat, v.location.lng], { radius: 9, color: '#F2B705', fillColor: '#12924F', fillOpacity: 1, weight: 3 }).addTo(map);
+    };
+    return card;
+  }
+
+  // ------------------------------------------------------------------ orders
+  let pendingFilter = null;
+  async function orders() {
+    let filter = pendingFilter || 'ACTIVE'; pendingFilter = null;
+    let search = '';
+    const groups = {
+      ACTIVE: ['AWAITING_RIDER', 'RIDER_ASSIGNED', 'IN_TRANSIT', 'AT_AGENCY', 'AT_DESTINATION_HUB', 'LAST_MILE_ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED'],
+      DISPUTED: ['DISPUTED'], PENDING_PAYMENT: ['PENDING_PAYMENT'], SETTLED: ['SETTLED'], CLOSED: ['REFUNDED', 'CANCELLED', 'EXPIRED'], ALL: null
+    };
+    const labels = { ACTIVE: 'En cours', DISPUTED: 'Litiges', PENDING_PAYMENT: 'Non payées', SETTLED: 'Terminées', CLOSED: 'Annulées / remboursées', ALL: 'Toutes' };
+    const box = h('div', {});
+    const searchInput = h('input', { class: 'input', type: 'search', placeholder: 'Code suivi, article, vendeur, téléphone…', style: 'max-width:320px', 'aria-label': 'Rechercher une commande' });
+    const chips = h('div', { class: 'toolbar' });
+    async function load() {
+      const st = groups[filter];
+      const list = await api('/orders?limit=300' + (st ? '&status=' + st.join(',') : ''));
+      const q = search.toLowerCase();
+      const rows = list.filter((o) => !q || [o.trackingCode, o.itemTitle, o.merchantName, o.buyerPhone, o.merchantPhone].some((x) => String(x || '').toLowerCase().includes(q)));
+      chips.replaceChildren(...Object.keys(groups).map((g) => h('button', { class: 'chip' + (g === filter ? ' on' : ''), type: 'button', onclick: () => { filter = g; load(); }, text: labels[g] })), searchInput);
+      box.replaceChildren(rows.length ? h('div', { class: 'table-box' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Code', 'Article', 'Vendeur', 'Type', 'Statut', 'Montant', 'Mis à jour'].map((t, i) => h('th', { class: i === 5 ? 'r' : '', text: t })))),
+        h('tbody', {}, rows.map((o) => h('tr', { onclick: () => openOrder(o.id), tabindex: '0', onkeydown: (e) => { if (e.key === 'Enter') openOrder(o.id); } },
+          h('td', { class: 'mono', text: o.trackingCode }), h('td', { text: o.itemTitle }), h('td', {}, o.merchantName, o.merchantVerified ? ' 🏅' : ''),
+          h('td', { text: `${o.type === 'INTER_CITY' ? 'Inter-villes' : 'Ville'} · ${o.paymentMode === 'COD' ? 'Cash' : 'Séquestre'}` }),
+          h('td', {}, pill(o.status)), h('td', { class: 'r num', text: fcfa(o.total) }), h('td', { class: 'sub', text: ago(o.updatedAt) })
+        )))
+      )) : h('div', { class: 'card empty', text: 'Aucune commande dans cette vue.' }));
+    }
+    searchInput.oninput = () => { search = searchInput.value; load(); };
+    $('#main').replaceChildren(page('Commandes', 'Cliquez sur une commande pour voir son parcours et agir.'), chips, box);
+    await load();
+  }
+
+  async function openOrder(id) {
+    const { order: o, journals } = await api('/orders/' + id);
+    const close = () => { bg.remove(); dr.remove(); document.removeEventListener('keydown', esc); };
+    const esc = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', esc);
+    const act = async (path, body, ok) => {
+      try { await api(path, { method: 'POST', body }); toast(ok); close(); openOrder(id); route(); refreshBadges(); }
+      catch (e) { toast(e.message); }
+    };
+    const resolveNote = h('input', { class: 'input', placeholder: 'Note de décision (facultatif)', 'aria-label': 'Note de décision' });
+    const actions = [];
+    if (o.status === 'DISPUTED') {
+      actions.push(h('div', { class: 'card', style: 'border-color:#6B3624' },
+        h('h3', { text: 'Litige', style: 'font-size:16px' }),
+        h('p', { class: 'sub', style: 'margin:6px 0 12px' }, `${o.dispute?.openedBy || ''} · ${when(o.dispute?.openedAt)} : `, o.dispute?.reason || ''),
+        resolveNote,
+        h('div', { class: 'toolbar', style: 'margin:10px 0 0' },
+          h('button', { class: 'btn primary', type: 'button', onclick: () => act(`/orders/${id}/resolve`, { resolution: 'RELEASE_TO_MERCHANT', note: resolveNote.value }, 'Fonds libérés au vendeur.'), text: 'Payer le vendeur' }),
+          h('button', { class: 'btn danger', type: 'button', onclick: () => act(`/orders/${id}/resolve`, { resolution: 'REFUND_BUYER', note: resolveNote.value }, 'Remboursement lancé.'), text: 'Rembourser le client' })
+        )
+      ));
+    }
+    const quick = [];
+    if (['PENDING_PAYMENT', 'AWAITING_RIDER', 'RIDER_ASSIGNED'].includes(o.status)) quick.push(h('button', { class: 'btn danger small', type: 'button', onclick: () => act(`/orders/${id}/cancel`, {}, 'Commande annulée.'), text: 'Annuler la commande' }));
+    if (o.status === 'AT_AGENCY') quick.push(h('button', { class: 'btn small', type: 'button', onclick: () => act(`/orders/${id}/arrived`, {}, 'Arrivée enregistrée, livreurs prévenus.'), text: 'Bus arrivé à destination' }));
+
+    const bg = h('div', { class: 'drawer-bg', onclick: close });
+    const dr = h('aside', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Commande ' + o.trackingCode },
+      h('div', { class: 'vhead' }, h('div', {}, h('div', { class: 'mono sub', text: o.trackingCode }), h('h2', { text: o.itemTitle })), h('button', { class: 'btn small', type: 'button', onclick: close, text: 'Fermer' })),
+      h('div', { class: 'toolbar', style: 'margin:0' }, pill(o.status), h('span', { class: 'pill', text: o.type === 'INTER_CITY' ? 'Inter-villes' : 'Même ville' }), h('span', { class: 'pill', text: o.paymentMode === 'COD' ? 'Cash' : 'Séquestre' }), ...quick),
+      ...actions,
+      h('div', { class: 'card' }, h('h3', { text: 'Argent', style: 'font-size:16px;margin-bottom:10px' }), h('div', { class: 'kv' }, [['Article', o.itemPrice], ['Livraison', o.deliveryFee], ['Agence', o.agencyFee], ['Commission', o.commission], ['Total client', o.total]].flatMap(([k, v]) => [h('span', { class: 'k', text: k }), h('span', { class: 'v', text: fcfa(v) })]))),
+      o.payouts.length ? h('div', { class: 'card' }, h('h3', { text: 'Versements', style: 'font-size:16px' }), o.payouts.map((p) => h('div', { class: 'payout' },
+        h('div', {}, h('b', { text: { MERCHANT: 'Vendeur', FIRST_MILE_RIDER: 'Livreur 1', LAST_MILE_RIDER: 'Livreur 2', BUYER_REFUND: 'Remboursement client' }[p.kind] }), h('div', { class: 'sub mono', text: `${p.phone} · ${fcfa(p.amount)}` }), p.lastError ? h('div', { class: 'sub', style: 'color:#F4B39A', text: p.lastError }) : null),
+        h('div', { class: 'toolbar', style: 'margin:0' }, pill(p.status, PAYOUT),
+          ['FAILED', 'NEEDS_REVIEW'].includes(p.status) ? h('button', { class: 'btn small', type: 'button', onclick: () => act(`/orders/${id}/payouts/${p.id}/review`, { action: 'RETRY' }, 'Relance programmée.'), text: 'Relancer' }) : null,
+          ['FAILED', 'NEEDS_REVIEW'].includes(p.status) ? h('button', { class: 'btn small', type: 'button', onclick: () => act(`/orders/${id}/payouts/${p.id}/review`, { action: 'MARK_SENT' }, 'Marqué comme envoyé.'), text: 'Déjà payé' }) : null)
+      ))) : null,
+      h('div', { class: 'card' }, h('h3', { text: 'Personnes', style: 'font-size:16px;margin-bottom:10px' }), h('div', { class: 'kv' }, [
+        ['Vendeur', `${o.merchantName} · ${o.merchantPhone}`], ['Client', o.buyerPhone], ['Payeur', o.payment?.payerPhone || '—'],
+        ['Ramassage', o.pickupAddress], ['Livraison', [o.dropoffAddress, o.landmark].filter(Boolean).join(' · ') || '—'],
+        ['Bordereau', o.waybillNumber || '—'], ['Essais de code', `${o.codeAttempts}`]
+      ].flatMap(([k, v]) => [h('span', { class: 'k', text: k }), h('span', { class: 'v', style: 'font-family:var(--body)', text: v })]))),
+      h('div', { class: 'card' }, h('h3', { text: 'Parcours', style: 'font-size:16px;margin-bottom:12px' }), h('ol', { class: 'timeline' }, o.history.slice().reverse().map((e) => h('li', {}, h('div', { class: 'when', text: when(e.at) }), h('div', {}, pill(e.status), e.note ? h('span', { class: 'sub', text: '  ' + e.note }) : null))))),
+      h('div', { class: 'card' }, h('h3', { text: 'Écritures comptables', style: 'font-size:16px;margin-bottom:8px' }), journals.length ? journals.map((j) => h('div', { style: 'padding:8px 0;border-bottom:1px solid var(--line)' },
+        h('div', { class: 'sub', text: `${when(j.createdAt)} · ${j.description}` }),
+        h('div', { class: 'kv' }, j.lines.flatMap((l) => [h('span', { class: 'k mono', style: 'font-size:12px', text: l.account }), h('span', { class: 'v', style: `color:${l.amount < 0 ? '#F4B39A' : '#6FD39C'}`, text: (l.amount > 0 ? '+' : '') + l.amount.toLocaleString('fr-FR') })]))
+      )) : h('div', { class: 'sub', text: 'Aucune écriture.' }))
+    );
+    document.body.append(bg, dr);
+    dr.querySelector('button').focus();
+  }
+
+  // ------------------------------------------------------------------ live map
+  let mapObj = null;
+  async function live() {
+    const holder = h('div', { id: 'map' });
+    $('#main').replaceChildren(
+      page('Carte en direct', 'Livreurs (position partagée dans Telegram) et colis en mouvement. Actualisation toutes les 15 s.'),
+      h('div', { class: 'legend' }, h('span', {}, h('i', { style: 'background:#6FD39C' }), 'Livreur en service'), h('span', {}, h('i', { style: 'background:#5F7468' }), 'Hors service'), h('span', {}, h('i', { style: 'background:#F2B705' }), 'Ramassage'), h('span', {}, h('i', { style: 'background:#EEF2EC' }), 'Livraison client')),
+      holder
+    );
+    if (mapObj) { mapObj.remove(); mapObj = null; }
+    mapObj = L.map(holder).setView([4.05, 9.75], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapObj);
+    const layer = L.layerGroup().addTo(mapObj);
+    let fitted = false;
+    async function draw() {
+      const data = await api('/map');
+      layer.clearLayers();
+      const bounds = [];
+      for (const r of data.riders) {
+        const ll = [r.location.lat, r.location.lng]; bounds.push(ll);
+        L.circleMarker(ll, { radius: 8, color: '#0B140F', weight: 2, fillColor: r.onDuty ? '#6FD39C' : '#5F7468', fillOpacity: 1 })
+          .bindPopup(h('div', {}, h('b', { text: r.name }), h('div', { class: 'mono', text: `${r.code} · ${r.plate}` }), h('div', { class: 'sub', text: `Position ${ago(r.at)}` }))).addTo(layer);
+      }
+      for (const o of data.orders) {
+        const popup = () => h('div', {}, h('b', { text: o.trackingCode }), h('div', { text: o.itemTitle }), h('div', { class: 'sub', text: (STATUS[o.status] || [o.status])[0] }), h('button', { class: 'btn small', style: 'margin-top:6px', type: 'button', onclick: () => openOrder(o.id), text: 'Ouvrir' }));
+        if (o.pickup) { bounds.push([o.pickup.lat, o.pickup.lng]); L.circleMarker([o.pickup.lat, o.pickup.lng], { radius: 6, color: '#F2B705', fillColor: '#F2B705', fillOpacity: 0.9 }).bindPopup(popup()).addTo(layer); }
+        if (o.dropoff) { bounds.push([o.dropoff.lat, o.dropoff.lng]); L.circleMarker([o.dropoff.lat, o.dropoff.lng], { radius: 6, color: '#EEF2EC', fillColor: '#EEF2EC', fillOpacity: 0.9 }).bindPopup(popup()).addTo(layer); }
+        if (o.pickup && o.dropoff) L.polyline([[o.pickup.lat, o.pickup.lng], [o.dropoff.lat, o.dropoff.lng]], { color: '#F2B705', weight: 2, dashArray: '4 6', opacity: 0.7 }).addTo(layer);
+      }
+      if (!fitted && bounds.length) { mapObj.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 }); fitted = true; }
+    }
+    await draw();
+    refreshTimer = setInterval(() => draw().catch(() => {}), 15000);
+  }
+
+  // ------------------------------------------------------------------ riders
+  async function riders() {
+    const list = await api('/riders');
+    const reasonInput = h('input', { class: 'input', placeholder: 'Motif de suspension (envoyé au livreur)', style: 'max-width:420px', 'aria-label': 'Motif de suspension' });
+    const act = async (r, status) => {
+      const note = status === 'APPROVED' ? '' : reasonInput.value.trim();
+      if (status !== 'APPROVED' && !note) { reasonInput.focus(); toast('Indiquez d’abord le motif de suspension.'); return; }
+      try { await api(`/riders/${r.id}/status`, { method: 'POST', body: { status, note } }); toast('Mis à jour.'); riders(); refreshBadges(); }
+      catch (e) { toast(e.message); }
+    };
+    $('#main').replaceChildren(
+      page('Livreurs', `${list.filter((r) => r.status === 'APPROVED').length} approuvés · ${list.filter((r) => r.onDuty).length} en service`),
+      h('div', { class: 'toolbar' }, reasonInput),
+      list.length ? h('div', { class: 'table-box' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Livreur', 'N°', 'Ville', 'Statut', 'Service', 'Caution (bloquée)', 'Livraisons', 'Vu', ''].map((t, i) => h('th', { class: i === 5 || i === 6 ? 'r' : '', text: t })))),
+        h('tbody', {}, list.map((r) => h('tr', { style: 'cursor:default' },
+          h('td', {}, h('b', { text: r.fullName }), h('div', { class: 'sub mono', text: `${r.phone} · ${r.plateNumber}` })),
+          h('td', { class: 'mono', text: r.riderCode }), h('td', { text: r.city || '—' }), h('td', {}, pill(r.status, PEOPLE)),
+          h('td', { text: r.onDuty ? '🟢' : '—' }), h('td', { class: 'r num', text: `${fcfa(r.floatBalance)} (${(r.floatReserved || 0).toLocaleString('fr-FR')})` }),
+          h('td', { class: 'r num', text: r.completedDeliveries }), h('td', { class: 'sub', text: ago(r.locationUpdatedAt) }),
+          h('td', {}, r.status === 'APPROVED'
+            ? h('button', { class: 'btn danger small', type: 'button', onclick: () => act(r, 'SUSPENDED'), text: 'Suspendre' })
+            : r.status === 'PENDING' ? h('a', { class: 'btn small', href: '#verify', text: 'Vérifier' })
+            : h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'APPROVED'), text: 'Réactiver' }))
+        )))
+      )) : h('div', { class: 'card empty', text: 'Aucun livreur inscrit pour le moment.' })
+    );
+  }
+
+  // ------------------------------------------------------------------ sellers
+  async function sellers() {
+    const list = await api('/users?limit=500');
+    const box = h('div', {});
+    const q = h('input', { class: 'input', type: 'search', placeholder: 'Nom, boutique, téléphone…', style: 'max-width:320px', 'aria-label': 'Rechercher un vendeur' });
+    const render = () => {
+      const s = q.value.toLowerCase();
+      const rows = list.filter((u) => !s || [u.shopName, u.fullName, u.phone, u.city].some((x) => String(x || '').toLowerCase().includes(s)));
+      box.replaceChildren(h('div', { class: 'table-box' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Boutique', 'Contact', 'Ville', 'Profil', 'Inscription en cours', 'Inscrit'].map((t) => h('th', { text: t })))),
+        h('tbody', {}, rows.map((u) => h('tr', { onclick: () => openSeller(u.id) },
+          h('td', {}, h('b', { text: u.shopName }), u.kycStatus === 'VERIFIED' ? ' 🏅' : ''), h('td', {}, u.fullName, h('div', { class: 'sub mono', text: u.phone })),
+          h('td', { text: u.city || '—' }), h('td', {}, pill(u.kycStatus, PEOPLE)),
+          h('td', { class: 'sub', text: u.signupInProgress ? `${u.signupInProgress.kind === 'rider' ? 'Livreur' : 'Vendeur'} · étape « ${u.signupInProgress.step} »` : '—' }),
+          h('td', { class: 'sub', text: when(u.createdAt) })
+        )))
+      )));
+    };
+    q.oninput = render;
+    $('#main').replaceChildren(page('Vendeurs', `${list.length} comptes · ${list.filter((u) => u.kycStatus === 'VERIFIED').length} vérifiés · ${list.filter((u) => u.signupInProgress).length} inscriptions en cours`), h('div', { class: 'toolbar' }, q), box);
+    render();
+  }
+  async function openSeller(id) {
+    const { user: u, orders: list } = await api('/users/' + id);
+    const close = () => { bg.remove(); dr.remove(); };
+    const bg = h('div', { class: 'drawer-bg', onclick: close });
+    const dr = h('aside', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': u.shopName },
+      h('div', { class: 'vhead' }, h('div', {}, h('h2', { text: u.shopName }), h('div', { class: 'sub', text: `${u.fullName} · ${u.phone}` })), h('button', { class: 'btn small', type: 'button', onclick: close, text: 'Fermer' })),
+      h('div', { class: 'toolbar', style: 'margin:0' }, pill(u.kycStatus, PEOPLE), u.kycNote ? h('span', { class: 'sub', text: 'Motif : ' + u.kycNote }) : null),
+      h('div', { class: 'thumbs' }, [['Selfie', u.selfieFileId], ['Recto', u.cniFrontFileId], ['Verso', u.cniBackFileId], ['Boutique', u.shopPhotoFileId]].map(([l, f]) => h('div', { class: 'thumb' }, f ? img(f, l) : h('div', { class: 'empty', style: 'padding:8px;font-size:11px', text: '—' }), h('span', { text: l })))),
+      h('div', { class: 'facts' }, [['Ville', u.city], ['N° CNI', u.cniNumber], ['Envoyé', when(u.kycSubmittedAt)], ['Décidé', when(u.kycReviewedAt)]].map(([k, v]) => h('div', { class: 'fact' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: v || '—' })))),
+      u.shopLocation ? h('a', { class: 'btn small', href: `https://www.google.com/maps?q=${u.shopLocation.lat},${u.shopLocation.lng}`, target: '_blank', rel: 'noopener', text: 'Voir la boutique sur Google Maps' }) : null,
+      h('div', { class: 'card' }, h('h3', { text: `Ventes (${list.length})`, style: 'font-size:16px;margin-bottom:8px' }), list.length ? list.map((o) => h('div', { class: 'payout', style: 'cursor:pointer', onclick: () => { close(); openOrder(o.id); } }, h('div', {}, h('b', { text: o.itemTitle }), h('div', { class: 'sub mono', text: o.trackingCode })), h('div', { class: 'toolbar', style: 'margin:0' }, pill(o.status), h('span', { class: 'num', text: fcfa(o.total) })))) : h('div', { class: 'sub', text: 'Aucune vente.' }))
+    );
+    document.body.append(bg, dr);
+  }
+
+  // ------------------------------------------------------------------ money
+  async function money() {
+    const [ledger, attention] = await Promise.all([api('/ledger'), api('/orders?limit=300&status=DELIVERED,REFUNDED,SETTLED')]);
+    const NAMES = { GATEWAY_CLEARING: 'Prestataire Mobile Money (net)', ESCROW: 'Séquestre (argent des clients)', MERCHANT_PAYABLE: 'À verser aux vendeurs', RIDER_PAYABLE: 'À verser aux livreurs', BUYER_REFUND_PAYABLE: 'Remboursements à verser', PLATFORM_REVENUE: 'Revenu BayamSafe', RIDER_FLOAT: 'Cautions des livreurs' };
+    const stuck = attention.flatMap((o) => o.payouts.filter((p) => ['FAILED', 'NEEDS_REVIEW', 'SENDING'].includes(p.status)).map((p) => ({ o, p })));
+    $('#main').replaceChildren(
+      page('Argent', 'Grand livre en partie double : chaque mouvement est équilibré, la somme doit toujours faire zéro.'),
+      h('div', { class: 'card health', style: `border-color:${ledger.sum === 0 ? '#1D5A39' : '#6B3624'}` }, ledger.sum === 0 ? '✓ Grand livre équilibré (somme = 0)' : `⚠ Déséquilibre de ${ledger.sum} FCFA : à investiguer immédiatement`),
+      h('div', { class: 'grid kpis', style: 'margin-top:16px' }, Object.entries(ledger.balances).map(([k, v]) => h('div', { class: 'card kpi' }, h('div', { class: 'lbl', text: NAMES[k] || k }), h('div', { class: 'val', text: fcfa(v) }), h('div', { class: 'sub mono', style: 'font-size:11px', text: k })))),
+      h('div', { class: 'section-title' }, h('h2', { text: 'Versements à surveiller' }), h('span', { class: 'sub', text: `${stuck.length} versement(s)` })),
+      stuck.length ? h('div', { class: 'table-box' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Commande', 'Bénéficiaire', 'Montant', 'Statut', 'Erreur'].map((t, i) => h('th', { class: i === 2 ? 'r' : '', text: t })))),
+        h('tbody', {}, stuck.map(({ o, p }) => h('tr', { onclick: () => openOrder(o.id) },
+          h('td', { class: 'mono', text: o.trackingCode }), h('td', { class: 'mono', text: p.phone }), h('td', { class: 'r num', text: fcfa(p.amount) }), h('td', {}, pill(p.status, PAYOUT)), h('td', { class: 'sub', text: p.lastError || '—' })
+        )))
+      )) : h('div', { class: 'card empty', text: 'Tous les versements sont partis.' })
+    );
+  }
+
+  // ------------------------------------------------------------------ start
+  if (key) api('/overview').then(boot).catch(() => logout()); else logout();
+})();
+</script>
+</body>
+</html>

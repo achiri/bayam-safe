@@ -7,6 +7,7 @@ import { isValidCameroonPhone } from '../domain/phone.js';
 import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../domain/types.js';
 import { DomainEvent } from '../services/events.js';
 import { esc, t } from '../i18n/locales.js';
+import { registerOnboarding } from './onboarding.js';
 
 type Strings = ReturnType<typeof t>;
 
@@ -26,8 +27,6 @@ interface Draft {
 
 type Flow =
   | { kind: 'order'; step: 'title' | 'price' | 'fee' | 'agency' | 'dest' | 'agencyFee' | 'buyer' | 'pickup' | 'mode' | 'confirm'; d: Draft }
-  | { kind: 'kyc'; step: 'cni' | 'photo'; cni?: string }
-  | { kind: 'rider'; step: 'cni' | 'plate' | 'city'; cni?: string; plate?: string }
   | { kind: 'waybill'; orderId: string; step: 'number' | 'photo'; number?: string }
   | { kind: 'code'; orderId: string }
   | { kind: 'problem'; orderId: string };
@@ -35,6 +34,8 @@ type Flow =
 interface SessionData {
   lang?: Lang;
   flow?: Flow;
+  /** What the person came for (landing-page deep link), remembered until they share their contact. */
+  intent?: 'merchant' | 'rider';
 }
 
 export type BotContext = Context &
@@ -57,6 +58,13 @@ function riderEarning(o: Order, leg: 'FIRST' | 'LAST'): number {
   }
   return o.deliveryFee;
 }
+
+/** Preset refusal reasons for the admin's one-tap buttons (the dashboard allows free text). */
+export const REJECT_REASONS: Record<string, string> = {
+  blur: 'Photos floues ou illisibles. Reprenez-les à la lumière, sans reflet.',
+  match: 'Le selfie ne correspond pas à la pièce d’identité.',
+  info: 'Informations incomplètes ou incohérentes avec les documents.'
+};
 
 const destinationTerminal = (o: Order) => {
   const origin = getAgency(o.originAgencyId ?? '');
@@ -123,16 +131,41 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await html(ctx, ctx.s.menuTitle(u.shopName, u.kycStatus === 'VERIFIED'), { reply_markup: mainMenu(ctx.s) });
   };
 
-  // ------------------------------------------------------------------ onboarding
+  // ------------------------------------------------------------------ sign-up
+
+  const onboarding = registerOnboarding(bot, app, html, guard, async (ctx, kind) => {
+    if (kind === 'merchant') await showMenu(ctx);
+  });
+
+  /** Where a known user lands: their unfinished sign-up, the seller profile, or the menu. */
+  const route = async (ctx: BotContext, intent?: 'merchant' | 'rider') => {
+    const u = ctx.user!;
+    if (u.draft && (!intent || intent === u.draft.kind)) return onboarding.ask(ctx, u, true);
+    if (intent === 'rider') {
+      const r = await riders.getByTelegram(ctx.from!.id);
+      if (!r || r.status === 'REJECTED') return onboarding.start(ctx, 'rider');
+      return riderMenu(ctx);
+    }
+    if (u.kycStatus === 'NONE' || u.kycStatus === 'REJECTED') {
+      if (u.kycStatus === 'REJECTED') await html(ctx, ctx.s.kycRejected(u.kycNote ?? ''));
+      const r = await riders.getByTelegram(ctx.from!.id);
+      if (!r || intent === 'merchant') return onboarding.start(ctx, 'merchant');
+      return riderMenu(ctx);
+    }
+    await showMenu(ctx);
+  };
 
   bot.command('start', guard(async (ctx) => {
     ctx.session.flow = undefined;
+    const payload = String(ctx.match ?? '');
+    const intent = payload === 'rider' ? 'rider' : payload === 'merchant' ? 'merchant' : undefined;
     if (!ctx.user) {
+      ctx.session.intent = intent;
       const kb = new Keyboard().requestContact(ctx.s.shareContactBtn).resized().oneTime();
       await html(ctx, ctx.s.welcomeNew, { reply_markup: kb });
       return;
     }
-    await showMenu(ctx);
+    await route(ctx, intent);
   }));
 
   bot.on('message:contact', guard(async (ctx) => {
@@ -141,21 +174,33 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       await html(ctx, ctx.s.shareOwnContact);
       return;
     }
+    const isNew = !ctx.user;
     const user = await users.registerFromContact(ctx.from.id, c, ctx.lang);
     ctx.user = user;
     await html(ctx, ctx.s.registered(user.fullName, user.phone), { reply_markup: { remove_keyboard: true } });
-    await showMenu(ctx);
+    if (isNew) await onboarding.start(ctx, ctx.session.intent === 'rider' ? 'rider' : 'merchant');
+    else await route(ctx);
   }));
 
   bot.command('menu', guard(async (ctx) => {
-    if (await requireUser(ctx)) await showMenu(ctx);
+    if (await requireUser(ctx)) await route(ctx);
   }));
 
   bot.command('help', guard(async (ctx) => html(ctx, ctx.s.help)));
 
   bot.command('cancel', guard(async (ctx) => {
     ctx.session.flow = undefined;
-    await html(ctx, ctx.s.cancelled);
+    await html(ctx, ctx.user?.draft ? ctx.s.onboardingPaused : ctx.s.cancelled, { reply_markup: { remove_keyboard: true } });
+  }));
+
+  bot.command('verify', guard(async (ctx) => {
+    const code = String(ctx.match ?? '').trim().toUpperCase();
+    if (!code) return html(ctx, ctx.s.verifyUsage);
+    const card = await riders.verifyCode(code);
+    if (!card?.verified) return html(ctx, ctx.s.verifyBad(code));
+    const caption = ctx.s.verifyOk({ name: card.firstName, plate: card.plateNumber, city: card.city, n: card.completedDeliveries, code: card.riderCode });
+    if (card.selfieFileId) await ctx.replyWithPhoto(card.selfieFileId, { caption, parse_mode: 'HTML' });
+    else await html(ctx, caption);
   }));
 
   const toggleLang = async (ctx: BotContext) => {
@@ -178,7 +223,12 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   const startOrder = (type: OrderType) =>
     guard(async (ctx: BotContext) => {
       await ctx.answerCallbackQuery?.().catch(() => undefined);
-      if (!(await requireUser(ctx))) return;
+      const u = await requireUser(ctx);
+      if (!u) return;
+      if (u.kycStatus === 'NONE' || u.kycStatus === 'REJECTED') {
+        await html(ctx, ctx.s.mustCompleteProfile, { reply_markup: new InlineKeyboard().text(ctx.s.btnCompleteProfile, 'menu:profile_start') });
+        return;
+      }
       ctx.session.flow = { kind: 'order', step: 'title', d: { type } };
       await html(ctx, ctx.s.askTitle);
     });
@@ -200,27 +250,47 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await listOrders(ctx);
   }));
 
-  const startKyc = async (ctx: BotContext) => {
+  const showProfile = async (ctx: BotContext) => {
     const u = await requireUser(ctx);
     if (!u) return;
-    if (u.kycStatus === 'VERIFIED' || u.kycStatus === 'PENDING') return html(ctx, ctx.s.kycAlready(u.kycStatus));
-    ctx.session.flow = { kind: 'kyc', step: 'cni' };
-    await html(ctx, ctx.s.kycIntro);
+    const kb = new InlineKeyboard();
+    if (u.kycStatus === 'NONE' || u.kycStatus === 'REJECTED') kb.text(ctx.s.btnCompleteProfile, 'menu:profile_start');
+    await html(ctx, ctx.s.profileStatus(u.kycStatus, u.kycNote), { reply_markup: kb });
   };
-  bot.command('kyc', guard(startKyc));
+  bot.command(['profile', 'kyc'], guard(showProfile));
   bot.callbackQuery('menu:kyc', guard(async (ctx) => {
     await ctx.answerCallbackQuery();
-    await startKyc(ctx);
+    await showProfile(ctx);
+  }));
+  bot.callbackQuery('menu:profile_start', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    if (ctx.user!.draft?.kind === 'merchant') return onboarding.ask(ctx, ctx.user!, true);
+    await onboarding.start(ctx, 'merchant');
   }));
 
-  const riderMenu = async (ctx: BotContext) => {
+  async function riderMenu(ctx: BotContext) {
     const r = await riders.getByTelegram(ctx.from!.id);
-    await html(ctx, ctx.s.riderMenu(r?.status, r?.onDuty, r?.floatBalance, r?.floatReserved));
-  };
+    const kb = new InlineKeyboard();
+    if (!r || r.status === 'REJECTED') kb.text(ctx.s.btnBecomeRider, 'menu:rider_start');
+    await html(ctx, ctx.s.riderMenu(r?.status, r?.onDuty, r?.floatBalance, r?.floatReserved, r?.status === 'APPROVED' ? r.riderCode : undefined), { reply_markup: kb });
+  }
   bot.callbackQuery('menu:rider', guard(async (ctx) => {
     await ctx.answerCallbackQuery();
     await riderMenu(ctx);
   }));
+  const startRider = async (ctx: BotContext) => {
+    if (!(await requireUser(ctx))) return;
+    if (ctx.user!.draft?.kind === 'rider') return onboarding.ask(ctx, ctx.user!, true);
+    const r = await riders.getByTelegram(ctx.from!.id);
+    if (r && r.status !== 'REJECTED') return riderMenu(ctx);
+    await onboarding.start(ctx, 'rider');
+  };
+  bot.callbackQuery('menu:rider_start', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await startRider(ctx);
+  }));
+  bot.command(['rider', 'register_rider'], guard(startRider));
 
   const leaderboard = async (ctx: BotContext) => {
     const top = await riders.leaderboard(5);
@@ -362,13 +432,6 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
 
   // ------------------------------------------------------------------ rider commands
 
-  bot.command('register_rider', guard(async (ctx) => {
-    if (!(await requireUser(ctx))) return;
-    if (await riders.getByTelegram(ctx.from!.id)) return riderMenu(ctx);
-    ctx.session.flow = { kind: 'rider', step: 'cni' };
-    await html(ctx, ctx.s.riderAskCni);
-  }));
-
   bot.command('on_duty', guard(async (ctx) => {
     await riders.setDuty(ctx.from!.id, true);
     await html(ctx, ctx.s.onDuty);
@@ -389,6 +452,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     if (!amount) return html(ctx, ctx.s.invalidNumber);
     const { topup, ussdCode } = await riders.requestTopup(ctx.from!.id, amount);
     await html(ctx, ctx.s.topupSent(topup.amount, ussdCode));
+    if (app.gateway.name === 'simulated') await html(ctx, `🧪 Test mode reference: <code>${esc(topup.reference)}</code>`);
   }));
 
   bot.command('jobs', guard(async (ctx) => {
@@ -403,6 +467,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   // Live location updates arrive as edited messages.
   const onLocation = async (ctx: BotContext, loc?: { latitude: number; longitude: number }) => {
     if (!loc || !ctx.from) return;
+    if (ctx.message && (await onboarding.handleLocation(ctx, { lat: loc.latitude, lng: loc.longitude }))) return;
     const f = ctx.session.flow;
     if (f?.kind === 'order' && f.step === 'pickup') {
       f.d.pickupLocation = { lat: loc.latitude, lng: loc.longitude };
@@ -537,34 +602,38 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
 
   // ------------------------------------------------------------------ admin buttons
 
-  bot.callbackQuery(/^adm:rider:(.+):(a|s)$/, guard(async (ctx) => {
+  bot.callbackQuery(/^adm:rider:(.+):(a|r:(\w+))$/, guard(async (ctx) => {
     if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Admins only', show_alert: true });
-    const r = await riders.decide(ctx.match[1], ctx.match[2] === 'a' ? 'APPROVED' : 'SUSPENDED');
+    const approve = ctx.match[2] === 'a';
+    const r = await riders.decide(ctx.match[1], approve ? 'APPROVED' : 'REJECTED', approve ? undefined : REJECT_REASONS[ctx.match[3]] ?? REJECT_REASONS.info);
     await ctx.answerCallbackQuery({ text: `${r.fullName}: ${r.status}` });
     await ctx.editMessageReplyMarkup().catch(() => undefined);
   }));
 
-  bot.callbackQuery(/^adm:kyc:(.+):(a|r)$/, guard(async (ctx) => {
+  bot.callbackQuery(/^adm:kyc:(.+):(a|r:(\w+))$/, guard(async (ctx) => {
     if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Admins only', show_alert: true });
-    const u = await users.decideKyc(ctx.match[1], ctx.match[2] === 'a');
+    const approve = ctx.match[2] === 'a';
+    const u = await users.decideKyc(ctx.match[1], approve, approve ? undefined : REJECT_REASONS[ctx.match[3]] ?? REJECT_REASONS.info);
     await ctx.answerCallbackQuery({ text: `${u.shopName}: ${u.kycStatus}` });
     await ctx.editMessageReplyMarkup().catch(() => undefined);
   }));
 
-  // ------------------------------------------------------------------ photos (KYC, waybill)
+  // ------------------------------------------------------------------ photos (sign-up, waybill)
 
-  bot.on('message:photo', guard(async (ctx) => {
+  const onPhoto = async (ctx: BotContext, fileId: string) => {
     const f = ctx.session.flow;
-    const fileId = ctx.message.photo.at(-1)!.file_id;
-    if (f?.kind === 'kyc' && f.step === 'photo' && f.cni) {
-      await users.submitKyc(ctx.from.id, f.cni, fileId);
-      ctx.session.flow = undefined;
-      await html(ctx, ctx.s.kycSubmitted);
-    } else if (f?.kind === 'waybill' && f.step === 'photo' && f.number) {
-      const o = await orders.recordAgencyDropoff(ctx.from.id, f.orderId, f.number, fileId);
+    if (f?.kind === 'waybill' && f.step === 'photo' && f.number) {
+      const o = await orders.recordAgencyDropoff(ctx.from!.id, f.orderId, f.number, fileId);
       ctx.session.flow = undefined;
       await html(ctx, ctx.s.mStatus(o.trackingCode, ctx.s.status(o.status)));
+      return;
     }
+    await onboarding.handlePhoto(ctx, fileId);
+  };
+  bot.on('message:photo', guard((ctx) => onPhoto(ctx, ctx.message.photo.at(-1)!.file_id)));
+  // People often send ID photos "as a file" to keep quality: accept image documents too.
+  bot.on('message:document', guard(async (ctx) => {
+    if (ctx.message.document.mime_type?.startsWith('image/')) await onPhoto(ctx, ctx.message.document.file_id);
   }));
 
   // ------------------------------------------------------------------ free-text steps
@@ -573,7 +642,11 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     const text = ctx.message.text.trim();
     const f = ctx.session.flow;
     const s = ctx.s;
-    if (!f || text.startsWith('/')) return;
+    if (text.startsWith('/')) return;
+    if (!f) {
+      await onboarding.handleText(ctx, text);
+      return;
+    }
 
     switch (f.kind) {
       case 'order': {
@@ -630,31 +703,6 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         }
         return;
       }
-      case 'kyc': {
-        if (f.step === 'cni') {
-          f.cni = text;
-          f.step = 'photo';
-          return html(ctx, s.kycAskPhoto);
-        }
-        return html(ctx, s.kycAskPhoto);
-      }
-      case 'rider': {
-        if (f.step === 'cni') {
-          f.cni = text;
-          f.step = 'plate';
-          return html(ctx, s.riderAskPlate);
-        }
-        if (f.step === 'plate') {
-          f.plate = text;
-          f.step = 'city';
-          const kb = new Keyboard();
-          CITIES.forEach((c) => kb.text(c).row());
-          return html(ctx, s.riderAskCity, { reply_markup: kb.resized().oneTime() });
-        }
-        await riders.apply(ctx.from.id, { cniNumber: f.cni!, plateNumber: f.plate!, vehicleType: 'MOTO', city: text.slice(0, 40) });
-        ctx.session.flow = undefined;
-        return html(ctx, s.riderApplied, { reply_markup: { remove_keyboard: true } });
-      }
       case 'waybill': {
         if (f.step === 'number') {
           f.number = text;
@@ -698,6 +746,31 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   const toAdmins = (text: string, extra: Record<string, unknown> = {}) =>
     Promise.all(config.ADMIN_TELEGRAM_IDS.map((id) => send(id, text, extra)));
   const merchantOf = async (o: Order) => store.getUser(o.merchantId);
+
+  /** Sends admins the documents as one album, the location pin, then the decision buttons. */
+  async function sendReviewCard(
+    photos: Array<[string | undefined, string]>,
+    text: string,
+    location: GeoPoint | undefined,
+    kind: 'kyc' | 'rider',
+    id: string
+  ) {
+    const media = photos.filter(([f]) => !!f).map(([f, label]) => ({ type: 'photo' as const, media: f!, caption: label }));
+    const kb = new InlineKeyboard()
+      .text('✅ Approve', `adm:${kind}:${id}:a`).row()
+      .text('❌ Blurry', `adm:${kind}:${id}:r:blur`)
+      .text('❌ Face ≠ ID', `adm:${kind}:${id}:r:match`)
+      .text('❌ Info', `adm:${kind}:${id}:r:info`);
+    for (const chat of config.ADMIN_TELEGRAM_IDS) {
+      try {
+        if (media.length) await bot.api.sendMediaGroup(chat, media);
+        if (location) await bot.api.sendLocation(chat, location.lat, location.lng);
+        await bot.api.sendMessage(chat, text, { parse_mode: 'HTML', reply_markup: kb });
+      } catch (err) {
+        console.warn('[bot] review card failed:', (err as Error).message);
+      }
+    }
+  }
 
   app.events.on(async (e: DomainEvent) => {
     switch (e.type) {
@@ -772,33 +845,41 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         return;
       case 'kyc.submitted': {
         const u = e.user;
-        const kb = new InlineKeyboard().text('✅ Approve', `adm:kyc:${u.id}:a`).text('❌ Reject', `adm:kyc:${u.id}:r`);
-        for (const id of config.ADMIN_TELEGRAM_IDS) {
-          try {
-            await bot.api.sendPhoto(id, u.cniPhotoFileId!, {
-              caption: `KYC: ${u.shopName} · ${u.phone} · CNI ${u.cniNumber}`,
-              reply_markup: kb
-            });
-          } catch (err) {
-            console.warn('[bot] KYC forward failed:', (err as Error).message);
-          }
-        }
+        await sendReviewCard(
+          [
+            [u.selfieFileId, 'Selfie'], [u.cniFrontFileId, 'ID front'], [u.cniBackFileId, 'ID back'], [u.shopPhotoFileId, 'Shop']
+          ],
+          `🏪 <b>Seller to verify</b>: ${esc(u.shopName)}\n${esc(u.fullName)} · ${esc(u.phone)}\n${esc(u.city)} · CNI <code>${esc(u.cniNumber)}</code>`,
+          u.shopLocation,
+          'kyc',
+          u.id
+        );
         return;
       }
-      case 'kyc.decided':
-        await send(e.user.telegramId, e.user.kycStatus === 'VERIFIED' ? t(e.user.lang).kycApproved : t(e.user.lang).kycRejected);
+      case 'kyc.decided': {
+        const s = t(e.user.lang);
+        await send(e.user.telegramId, e.user.kycStatus === 'VERIFIED' ? s.kycApproved : s.kycRejected(e.user.kycNote ?? ''));
         return;
+      }
       case 'rider.applied': {
         const r = e.rider;
-        await toAdmins(`🛵 Rider application: <b>${esc(r.fullName)}</b> · ${esc(r.phone)} · CNI ${esc(r.cniNumber)} · ${esc(r.plateNumber)} · ${esc(r.city)}`, {
-          reply_markup: new InlineKeyboard().text('✅ Approve', `adm:rider:${r.id}:a`).text('⛔ Reject', `adm:rider:${r.id}:s`)
-        });
+        await sendReviewCard(
+          [
+            [r.selfieFileId, 'Selfie'], [r.cniFrontFileId, 'ID front'], [r.cniBackFileId, 'ID back'], [r.vehiclePhotoFileId, 'Vehicle']
+          ],
+          `🛵 <b>Rider to verify</b>: ${esc(r.fullName)}\n${esc(r.phone)} · ${esc(r.city)}\nCNI <code>${esc(r.cniNumber)}</code> · ${esc(r.vehicleType)} <code>${esc(r.plateNumber)}</code>`,
+          undefined,
+          'rider',
+          r.id
+        );
         return;
       }
       case 'rider.decided': {
         const u = await store.getUser(e.rider.userId);
         const s = t(u?.lang ?? 'fr');
-        await send(e.rider.telegramId, e.rider.status === 'APPROVED' ? s.riderApproved : s.riderSuspended);
+        const r = e.rider;
+        const text = r.status === 'APPROVED' ? s.riderApproved(r.riderCode) : r.status === 'REJECTED' ? s.riderRejected(r.reviewNote ?? '') : s.riderSuspended(r.reviewNote ?? '');
+        await send(r.telegramId, text);
         return;
       }
       case 'topup.confirmed': {

@@ -1,7 +1,26 @@
 import { AppError, forbidden, invalid, notFound } from '../domain/errors.js';
+import { assertGeoPoint } from '../domain/geo.js';
 import { normalizeCameroonPhone } from '../domain/phone.js';
 import { newId } from '../domain/secrets.js';
-import { Lang, User } from '../domain/types.js';
+import { GeoPoint, Lang, OnboardingDraft, User } from '../domain/types.js';
+
+export interface MerchantProfileInput {
+  shopName?: string;
+  city?: string;
+  cniNumber?: string;
+  selfieFileId?: string;
+  cniFrontFileId?: string;
+  cniBackFileId?: string;
+  shopPhotoFileId?: string;
+  shopLocation?: GeoPoint;
+}
+
+/** Cameroon CNI numbers are digits; passports and receipts mix letters. Accept 6-20 alphanumerics. */
+export function normalizeIdNumber(raw: string): string {
+  const v = raw.replace(/[\s.-]/g, '').toUpperCase();
+  if (!/^[A-Z0-9]{6,20}$/.test(v)) throw invalid('Invalid ID number (6 to 20 letters or digits)');
+  return v;
+}
 import { Store } from '../storage/store.js';
 import { EventBus } from './events.js';
 
@@ -73,28 +92,87 @@ export class UserService {
     return this.store.updateUser(u);
   }
 
-  /** Merchant submits ID for the verified badge. The badge is only granted after admin review. */
-  async submitKyc(telegramId: number, cniNumber: string, cniPhotoFileId: string): Promise<User> {
+  // ------------------------------------------------------------------ sign-up drafts
+
+  /** Starts (or restarts) a sign-up and persists it, so a restart or a lost signal loses nothing. */
+  async startDraft(telegramId: number, kind: OnboardingDraft['kind'], firstStep: string): Promise<User> {
     const u = await this.require(telegramId);
-    const cni = cniNumber.replace(/\s/g, '').toUpperCase();
-    if (!/^[A-Z0-9]{6,20}$/.test(cni)) throw invalid('Invalid ID number');
-    if (!cniPhotoFileId) throw invalid('A photo of the ID card is required');
-    if (u.kycStatus === 'VERIFIED') throw invalid('Already verified');
-    Object.assign(u, { cniNumber: cni, cniPhotoFileId, kycStatus: 'PENDING', updatedAt: new Date().toISOString() });
+    u.draft = { kind, step: firstStep, data: {}, startedAt: new Date().toISOString() };
+    u.updatedAt = new Date().toISOString();
+    return this.store.updateUser(u);
+  }
+
+  /** Saves answers so far and moves the draft to its next step. */
+  async saveDraft(telegramId: number, patch: OnboardingDraft['data'], nextStep: string): Promise<User> {
+    const u = await this.require(telegramId);
+    if (!u.draft) throw invalid('No sign-up in progress');
+    u.draft = { ...u.draft, step: nextStep, data: { ...u.draft.data, ...patch } };
+    u.updatedAt = new Date().toISOString();
+    return this.store.updateUser(u);
+  }
+
+  async clearDraft(telegramId: number): Promise<User> {
+    const u = await this.require(telegramId);
+    u.draft = undefined;
+    u.updatedAt = new Date().toISOString();
+    return this.store.updateUser(u);
+  }
+
+  /**
+   * Seller sign-up: shop, city, selfie, both sides of the ID card, ID number, shop photo and the
+   * shop's exact GPS location. The seller can sell once submitted; the verified badge is only
+   * shown after an admin has checked the documents.
+   */
+  async submitMerchantProfile(telegramId: number, p: MerchantProfileInput): Promise<User> {
+    const u = await this.require(telegramId);
+    if (u.kycStatus === 'VERIFIED') throw invalid('Your profile is already verified.');
+    const shopName = clean(p.shopName ?? '', 60);
+    if (shopName.length < 2) throw invalid('Shop name too short');
+    const city = clean(p.city ?? '', 40);
+    if (!city) throw invalid('City is required');
+    const cni = normalizeIdNumber(p.cniNumber ?? '');
+    for (const [key, label] of [['selfieFileId', 'selfie'], ['cniFrontFileId', 'ID card front'], ['cniBackFileId', 'ID card back'], ['shopPhotoFileId', 'shop photo']] as const) {
+      if (!p[key]) throw invalid(`Missing ${label}`);
+    }
+    const now = new Date().toISOString();
+    Object.assign(u, {
+      shopName,
+      city,
+      cniNumber: cni,
+      selfieFileId: p.selfieFileId,
+      cniFrontFileId: p.cniFrontFileId,
+      cniBackFileId: p.cniBackFileId,
+      shopPhotoFileId: p.shopPhotoFileId,
+      shopLocation: assertGeoPoint(p.shopLocation),
+      kycStatus: 'PENDING',
+      kycSubmittedAt: now,
+      kycNote: undefined,
+      draft: undefined,
+      updatedAt: now
+    } satisfies Partial<User>);
     const saved = await this.store.updateUser(u);
     this.events.emit({ type: 'kyc.submitted', user: saved });
     return saved;
   }
 
-  async decideKyc(userId: string, approve: boolean): Promise<User> {
+  async decideKyc(userId: string, approve: boolean, note?: string): Promise<User> {
     const u = await this.store.getUser(userId);
     if (!u) throw notFound('User');
     if (u.kycStatus !== 'PENDING') throw invalid(`KYC is ${u.kycStatus}, not PENDING`);
+    if (!approve && !note?.trim()) throw invalid('Give the seller a reason so they can fix it');
     u.kycStatus = approve ? 'VERIFIED' : 'REJECTED';
-    u.updatedAt = new Date().toISOString();
+    u.kycNote = approve ? undefined : clean(note!, 300);
+    u.kycReviewedAt = new Date().toISOString();
+    u.updatedAt = u.kycReviewedAt;
     const saved = await this.store.updateUser(u);
     this.events.emit({ type: 'kyc.decided', user: saved });
     return saved;
+  }
+
+  /** Sellers must have submitted their documents before they can create orders. */
+  assertCanSell(u: User) {
+    if (u.kycStatus === 'NONE') throw new AppError('PROFILE_INCOMPLETE', 'Complete your seller profile first (/start).', 403);
+    if (u.kycStatus === 'REJECTED') throw new AppError('PROFILE_REJECTED', `Your seller profile was refused: ${u.kycNote ?? ''} Send /start to resubmit.`, 403);
   }
 
   pendingKyc() {

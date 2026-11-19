@@ -141,14 +141,20 @@ class PgRepo implements Repo {
   listUsersByKyc(status: User['kycStatus']) {
     return this.many<User>('SELECT data FROM users WHERE kyc_status = $1 ORDER BY created_at', [status]);
   }
+  listUsers(limit = 200) {
+    return this.many<User>('SELECT data FROM users ORDER BY created_at DESC LIMIT $1', [Math.min(limit, 1000)]);
+  }
 
   // ---- riders
   async insertRider(r: Rider) {
     await this.sql.query(
-      `INSERT INTO riders (id, telegram_id, user_id, status, on_duty, version, data, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`,
-      [r.id, r.telegramId, r.userId, r.status, r.onDuty, r.version, json(r), r.createdAt]
+      `INSERT INTO riders (id, telegram_id, user_id, rider_code, status, on_duty, version, data, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`,
+      [r.id, r.telegramId, r.userId, r.riderCode, r.status, r.onDuty, r.version, json(r), r.createdAt]
     );
+  }
+  getRiderByCode(code: string) {
+    return this.one<Rider>('SELECT data FROM riders WHERE rider_code = $1', [code]);
   }
   getRider(id: string) {
     return this.one<Rider>('SELECT data FROM riders WHERE id = $1', [id]);

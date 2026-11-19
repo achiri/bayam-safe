@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BayamSafe · Vendez en ligne sans crainte</title>
+<meta name="description" content="Paiement protégé MTN MoMo et Orange Money pour les vendeurs WhatsApp, TikTok et Facebook au Cameroun. L’argent du client reste bloqué jusqu’à la livraison.">
+<meta property="og:title" content="BayamSafe · Paiement protégé">
+<meta property="og:description" content="L’argent attend. Le colis arrive. Vendez en ligne sans crainte au Cameroun.">
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: sand page, night-forest bands for proof moments; hero pairs the promise with a working escrow simulator. */
+:root {
+  --sand: #F7F4EC; --paper: #FFFFFF; --ink: #12201A; --muted: #56675C; --line: #DCD6C6;
+  --fako: #0B6B3A; --fako-hi: #12924F; --forest: #074A28; --gold: #F2B705; --laterite: #B8461F;
+  --night: #0F1A14; --night-2: #16241C; --night-line: #2A3B31; --night-ink: #F1EEE4; --night-muted: #A9B8AD;
+  --display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+  --body: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--sand); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1160px; margin: 0 auto; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -0.025em; line-height: 1.02; margin: 0; text-wrap: balance; }
+h2 { font-size: clamp(34px, 5.2vw, 60px); font-weight: 800; }
+h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+p { margin: 0; }
+a { color: inherit; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fako); }
+.lede { font-size: clamp(17px, 2vw, 20px); color: var(--muted); max-width: 58ch; }
+section { padding-block: clamp(72px, 10vw, 120px); }
+.section-head { display: grid; gap: 14px; margin-bottom: 48px; max-width: 760px; }
+.night { background: var(--night); color: var(--night-ink); }
+.night .eyebrow { color: var(--gold); }
+.night .lede, .night .muted { color: var(--night-muted); }
+.muted { color: var(--muted); }
+:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; border-radius: 6px; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 0 24px; border-radius: 999px; font-weight: 600; font-size: 16px; text-decoration: none; border: 2px solid transparent; cursor: pointer; font-family: var(--body); transition: transform .15s ease, background .15s ease; }
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: var(--fako); color: #FFFFFF; }
+.btn-primary:hover { background: var(--forest); }
+.btn-gold { background: var(--gold); color: var(--ink); }
+.btn-gold:hover { background: #FFC81F; }
+.btn-ghost { border-color: currentColor; color: inherit; background: transparent; }
+.btn svg { flex: none; }
+
+/* Nav */
+.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: rgba(247, 244, 236, 0.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.nav .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 68px; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: -0.02em; text-decoration: none; }
+.brand .s { color: var(--fako); }
+.nav-links { display: flex; gap: 28px; font-size: 15px; font-weight: 500; }
+.nav-links a { text-decoration: none; color: var(--muted); }
+.nav-links a:hover { color: var(--ink); }
+.nav-right { display: flex; align-items: center; gap: 10px; }
+.lang { min-height: 44px; min-width: 44px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper); font-family: var(--mono); font-weight: 600; font-size: 13px; cursor: pointer; padding: 0 12px; color: var(--ink); }
+.nav .btn { min-height: 44px; padding: 0 18px; font-size: 15px; }
+@media (max-width: 880px) { .nav-links { display: none; } }
+@media (max-width: 420px) { .nav .btn span.long { display: none; } }
+
+/* Hero */
+.hero { padding-block: clamp(40px, 6vw, 80px) clamp(64px, 8vw, 96px); }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: clamp(32px, 5vw, 64px); align-items: center; }
+@media (max-width: 920px) { .hero-grid { grid-template-columns: 1fr; } }
+.hero h1 { font-size: clamp(44px, 7.4vw, 92px); font-weight: 800; }
+.hero h1 .gold { background: linear-gradient(transparent 62%, var(--gold) 62%, var(--gold) 90%, transparent 90%); padding-inline: 4px; }
+.hero .lede { margin-top: 22px; }
+.hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+.hero-proof { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 28px; font-size: 14px; color: var(--muted); }
+.hero-proof span { display: inline-flex; align-items: center; gap: 8px; }
+.tick { width: 18px; height: 18px; border-radius: 50%; background: var(--fako); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+
+/* Simulator */
+.sim { position: relative; display: grid; justify-items: center; gap: 18px; }
+.sim-label { font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.phone { width: min(340px, 100%); aspect-ratio: 340 / 640; background: var(--night); border-radius: 44px; padding: 12px; box-shadow: 0 40px 80px -30px rgba(15, 26, 20, 0.45), inset 0 0 0 2px #2A3B31; }
+.screen { width: 100%; height: 100%; border-radius: 34px; background: var(--sand); overflow: hidden; display: flex; flex-direction: column; position: relative; }
+.screen-top { background: var(--night); color: var(--night-ink); padding: 18px 18px 14px; display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
+.screen-top small { display: block; font-weight: 400; color: var(--night-muted); font-size: 12px; }
+.ridge-mini { padding: 10px 14px 0; background: var(--night); }
+.ridge-mini svg { width: 100%; height: 46px; display: block; }
+.stage { flex: 1; padding: 18px; display: flex; flex-direction: column; gap: 14px; justify-content: center; }
+.step { display: none; flex-direction: column; gap: 14px; animation: fade .35s ease; }
+.step.on { display: flex; }
+@keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.chat { background: #FFFFFF; border-radius: 14px 14px 14px 4px; padding: 12px 14px; font-size: 14px; line-height: 1.45; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+.chat.me { background: #DCF2DD; border-radius: 14px 14px 4px 14px; align-self: flex-end; }
+.linkcard { background: var(--night); color: var(--night-ink); border-radius: 10px; padding: 10px; display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 13px; }
+.ussd { background: #1B1B1B; color: #F2F2F2; border-radius: 14px; padding: 18px; font-family: var(--mono); font-size: 13px; line-height: 1.6; }
+.ussd .pin { margin-top: 10px; border-bottom: 2px solid #F2B705; letter-spacing: 0.4em; width: 90px; }
+.big-lock { display: flex; justify-content: center; }
+.big-lock svg .shackle { transition: transform .6s cubic-bezier(.3, 1.5, .5, 1); transform-origin: 136px 94px; }
+.big-lock.open svg .shackle { transform: translateY(-22px) rotate(-28deg); }
+.state { text-align: center; display: grid; gap: 4px; }
+.state b { font-family: var(--display); font-size: 22px; letter-spacing: -0.01em; }
+.state span { font-size: 13px; color: var(--muted); }
+.code-plaque { background: var(--night); border-radius: 16px; padding: 16px; text-align: center; color: var(--night-ink); }
+.code-plaque .digits { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
+.code-plaque .digits span { width: 44px; height: 54px; border-radius: 10px; background: var(--night-2); border: 1px solid var(--night-line); display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 28px; font-weight: 600; color: var(--gold); }
+.payouts { display: grid; gap: 8px; }
+.payouts div { display: flex; justify-content: space-between; background: #FFFFFF; border-radius: 12px; padding: 12px 14px; font-size: 14px; }
+.payouts .amt { font-family: var(--mono); font-weight: 600; color: var(--fako); }
+.sim-btn { width: 100%; min-height: 48px; border-radius: 14px; border: 0; background: var(--fako); color: #FFFFFF; font-weight: 600; font-size: 15px; cursor: pointer; font-family: var(--body); }
+.sim-btn:hover { background: var(--forest); }
+.sim-btn.gold { background: var(--gold); color: var(--ink); }
+
+/* Money meter */
+.meter { width: min(440px, 100%); display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; position: relative; }
+.meter .slot { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 10px; text-align: center; font-size: 12px; color: var(--muted); display: grid; gap: 2px; transition: border-color .3s, background .3s; }
+.meter .slot b { font-family: var(--mono); font-size: 14px; color: var(--ink); }
+.meter .slot.hot { border-color: var(--fako); background: #E7F2EA; }
+.meter .slot.hot b { color: var(--fako); }
+
+/* Trust strip */
+.strip { border-block: 1px solid var(--line); padding-block: 22px; }
+.strip .wrap { display: flex; flex-wrap: wrap; gap: 14px 36px; align-items: center; justify-content: space-between; font-size: 15px; color: var(--muted); }
+.strip b { color: var(--ink); font-weight: 600; }
+
+/* Fears */
+.fears { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.fear { background: var(--paper); border: 1px solid var(--line); border-radius: 24px; padding: 28px; display: grid; gap: 14px; align-content: start; }
+.fear .who { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--laterite); }
+.fear q { font-family: var(--display); font-size: 24px; font-weight: 600; line-height: 1.2; quotes: "« " " »"; letter-spacing: -0.01em; }
+.fear .fix { border-top: 1px dashed var(--line); padding-top: 14px; color: var(--muted); font-size: 15px; }
+.fear .fix b { color: var(--fako); }
+
+/* Climb */
+.climb { position: relative; }
+.climb-svg { width: 100%; height: auto; display: block; margin-bottom: 28px; }
+.climb-svg .path { stroke-dasharray: 1600; stroke-dashoffset: var(--draw, 1600); transition: stroke-dashoffset .2s linear; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 20px; }
+@media (max-width: 860px) { .steps { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .steps { grid-template-columns: 1fr; } }
+.steps li { display: grid; gap: 8px; align-content: start; }
+.steps .n { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--gold); }
+.steps h3 { font-size: 20px; }
+.steps p { color: var(--night-muted); font-size: 15px; }
+
+/* Features */
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.feature { border-radius: 24px; padding: 30px; display: grid; gap: 12px; align-content: start; background: var(--paper); border: 1px solid var(--line); }
+.feature.dark { background: var(--night); color: var(--night-ink); border-color: var(--night); }
+.feature.dark .muted { color: var(--night-muted); }
+.feature .ico { width: 48px; height: 48px; border-radius: 14px; background: #E7F2EA; display: flex; align-items: center; justify-content: center; }
+.feature.dark .ico { background: var(--night-2); }
+.route { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 13px; flex-wrap: wrap; margin-top: 6px; }
+.route span { background: var(--night-2); border: 1px solid var(--night-line); border-radius: 999px; padding: 4px 10px; }
+
+/* Calculator */
+.calc { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: stretch; }
+@media (max-width: 860px) { .calc { grid-template-columns: 1fr; } }
+.calc-in, .calc-out { border-radius: 24px; padding: clamp(22px, 3vw, 34px); }
+.calc-in { background: var(--paper); border: 1px solid var(--line); display: grid; gap: 26px; }
+.field { display: grid; gap: 10px; }
+.field label { font-weight: 600; font-size: 15px; display: flex; justify-content: space-between; gap: 12px; }
+.field label output { font-family: var(--mono); color: var(--fako); }
+.field input[type=range] { width: 100%; accent-color: var(--fako); min-height: 32px; }
+.field small { color: var(--muted); font-size: 13px; }
+.calc-out { background: var(--night); color: var(--night-ink); display: grid; gap: 22px; align-content: start; }
+.calc-out .row { display: grid; gap: 4px; }
+.calc-out .lbl { font-size: 14px; color: var(--night-muted); }
+.calc-out .val { font-family: var(--mono); font-size: clamp(30px, 4vw, 44px); font-weight: 600; letter-spacing: -0.01em; }
+.calc-out .val.loss { color: #F0A07E; }
+.calc-out .val.fee { color: var(--gold); }
+.calc-out hr { border: 0; border-top: 1px solid var(--night-line); margin: 0; width: 100%; }
+.calc-out .note { font-size: 13px; color: var(--night-muted); }
+
+/* Pricing */
+.pricing { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 24px; }
+@media (max-width: 860px) { .pricing { grid-template-columns: 1fr; } }
+.price-card { background: var(--fako); color: #FFFFFF; border-radius: 28px; padding: clamp(26px, 4vw, 44px); display: grid; gap: 16px; align-content: start; }
+.price-card .pct { font-family: var(--display); font-size: clamp(72px, 12vw, 132px); font-weight: 800; line-height: 0.9; letter-spacing: -0.04em; }
+.price-card .pct sup { font-size: 0.4em; vertical-align: top; }
+.price-card ul { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 10px; }
+.price-card li { display: flex; gap: 10px; align-items: flex-start; }
+.receipt { background: var(--paper); border: 1px solid var(--line); border-radius: 28px; padding: clamp(22px, 3vw, 32px); font-family: var(--mono); font-size: 14px; display: grid; gap: 10px; align-content: start; }
+.receipt .r { display: flex; justify-content: space-between; gap: 12px; }
+.receipt .t { border-top: 1px dashed var(--line); padding-top: 10px; font-weight: 600; }
+.receipt .head-r { font-family: var(--body); font-weight: 600; font-size: 16px; margin-bottom: 4px; }
+
+/* Riders */
+.riders { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(28px, 5vw, 64px); align-items: center; }
+@media (max-width: 860px) { .riders { grid-template-columns: 1fr; } }
+.rider-perks { list-style: none; padding: 0; margin: 24px 0 32px; display: grid; gap: 14px; }
+.rider-perks li { display: grid; grid-template-columns: 28px 1fr; gap: 12px; color: var(--night-muted); }
+.rider-perks b { color: var(--night-ink); display: block; }
+.badge { background: var(--sand); color: var(--ink); border-radius: 24px; overflow: hidden; max-width: 380px; width: 100%; justify-self: center; transform: rotate(-3deg); box-shadow: 0 30px 60px -20px rgba(0,0,0,0.6); }
+.badge .top { background: var(--fako); color: var(--sand); padding: 16px 20px; display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 800; font-size: 19px; }
+.badge .body { padding: 20px; display: grid; grid-template-columns: 100px 1fr; gap: 16px; align-items: center; }
+.badge .photo { width: 100px; height: 124px; border-radius: 14px; background: repeating-linear-gradient(135deg, #E6E0D0 0 8px, #EFEADD 8px 16px); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; text-align: center; padding: 8px; }
+.badge .k { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 8px; }
+.badge .v { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+.badge .nm { font-family: var(--display); font-weight: 600; font-size: 20px; line-height: 1.1; }
+.badge .foot { border-top: 1px dashed var(--line); padding: 12px 20px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+
+/* FAQ */
+.faq { display: grid; gap: 12px; max-width: 860px; }
+.faq details { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 0 22px; }
+.faq summary { cursor: pointer; list-style: none; min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; font-weight: 600; font-size: 17px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; font-family: var(--mono); font-size: 22px; color: var(--fako); flex: none; }
+.faq details[open] summary::after { content: "–"; }
+.faq details p { padding-bottom: 20px; color: var(--muted); max-width: 70ch; }
+
+/* Final CTA */
+.final { background: var(--fako); color: #FFFFFF; text-align: center; }
+.final .wrap { display: grid; justify-items: center; gap: 22px; }
+.final h2 { max-width: 16ch; }
+.final p { color: #D7EBDD; max-width: 52ch; font-size: 18px; }
+.final .ctas { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+footer { padding-block: 40px; font-size: 14px; color: var(--muted); }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
+footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  html { scroll-behavior: auto; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="lock" viewBox="0 0 200 200">
+    <path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="#12201A" stroke-width="16" stroke-linecap="round"></path>
+    <rect x="40" y="88" width="120" height="94" rx="24" fill="#0B6B3A"></rect>
+    <polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon>
+  </symbol>
+  <symbol id="lock-rev" viewBox="0 0 200 200">
+    <path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="#F1EEE4" stroke-width="16" stroke-linecap="round"></path>
+    <rect x="40" y="88" width="120" height="94" rx="24" fill="#12924F"></rect>
+    <polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon>
+  </symbol>
+  <symbol id="tg" viewBox="0 0 24 24"><path fill="currentColor" d="M21.9 4.3 18.6 20c-.2 1.1-.9 1.4-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.2-8.3c.4-.4-.1-.6-.6-.2L6 13.6 1.1 12c-1.1-.3-1.1-1.1.2-1.6L20.5 3c.9-.3 1.7.2 1.4 1.3z"></path></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+</svg>
+
+<nav class="nav" aria-label="Principal">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg width="34" height="34" aria-hidden="true"><use href="#lock"></use></svg><span>Bayam<span class="s">Safe</span></span></a>
+    <div class="nav-links">
+      <a href="#comment" data-i18n="nav_how">Comment ça marche</a>
+      <a href="#tarifs" data-i18n="nav_price">Tarifs</a>
+      <a href="#livreurs" data-i18n="nav_riders">Livreurs</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <div class="nav-right">
+      <button class="lang" id="langBtn" type="button" aria-label="Switch to English">EN</button>
+      <a class="btn btn-primary js-merchant" href="#commencer"><svg width="18" height="18" aria-hidden="true"><use href="#tg"></use></svg><span class="long" data-i18n="cta_short">Commencer</span></a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+  <header class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow" data-i18n="hero_eyebrow">Paiement protégé · MTN MoMo &amp; Orange Money</span>
+        <h1 style="margin-top:18px" data-i18n-html="hero_h1">Vendez en ligne. <span class="gold">Soyez payé</span> à coup sûr.</h1>
+        <p class="lede" data-i18n="hero_lede">Votre client paie d’avance par Mobile Money. BayamSafe garde l’argent sous clé pendant que le livreur apporte le colis. Le client vérifie, donne son code, et vous êtes payé. Fini les faux clients, fini les « je paierai à la livraison » qui ne décrochent plus.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary js-merchant" href="#commencer"><svg width="20" height="20" aria-hidden="true"><use href="#tg"></use></svg><span data-i18n="cta_merchant">Créer mon compte vendeur</span></a>
+          <a class="btn btn-ghost" href="#simulateur" data-i18n="cta_try">Essayer en 20 secondes</a>
+        </div>
+        <div class="hero-proof">
+          <span><span class="tick"><svg width="12" height="12" style="color:#fff" aria-hidden="true"><use href="#check"></use></svg></span><span data-i18n="proof_1">Aucun abonnement</span></span>
+          <span><span class="tick"><svg width="12" height="12" style="color:#fff" aria-hidden="true"><use href="#check"></use></svg></span><span data-i18n="proof_2">Inscription sur Telegram</span></span>
+          <span><span class="tick"><svg width="12" height="12" style="color:#fff" aria-hidden="true"><use href="#check"></use></svg></span><span data-i18n="proof_3">Payé sur votre MoMo / OM</span></span>
+        </div>
+      </div>
+
+      <div class="sim" id="simulateur">
+        <span class="sim-label" data-i18n="sim_label">Simulateur · une vente de bout en bout</span>
+        <div class="phone">
+          <div class="screen" aria-live="polite">
+            <div class="screen-top">
+              <svg width="28" height="28" aria-hidden="true"><use href="#lock-rev"></use></svg>
+              <div>BayamSafe<small id="simTitle">Robe wax · 21 500 FCFA</small></div>
+            </div>
+            <div class="ridge-mini">
+              <svg viewBox="0 0 300 46" preserveAspectRatio="none" aria-hidden="true">
+                <path d="M0 44 L60 34 L110 38 L170 22 L210 28 L262 6" fill="none" stroke="#2A3B31" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"></path>
+                <path id="simRidge" d="M0 44 L60 34 L110 38 L170 22 L210 28 L262 6" fill="none" stroke="#F2B705" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="320" stroke-dashoffset="320" style="transition:stroke-dashoffset .6s ease"></path>
+              </svg>
+            </div>
+            <div class="stage">
+              <div class="step on" data-step="0">
+                <div class="chat me"><span data-i18n="s0_msg">Voici le lien de paiement protégé pour votre robe 👇</span>
+                  <div class="linkcard"><svg width="26" height="26" aria-hidden="true"><use href="#lock-rev"></use></svg><span><b data-i18n="s0_card">Paiement protégé</b><br>21 500 FCFA</span></div>
+                </div>
+                <div class="chat" data-i18n="s0_reply">Ah, l’argent reste bloqué jusqu’à la livraison ? Je paie maintenant.</div>
+                <button class="sim-btn" type="button" data-next data-i18n="s0_btn">Le client ouvre le lien et paie</button>
+              </div>
+              <div class="step" data-step="1">
+                <div class="ussd"><span data-i18n="s1_ussd">Paiement de 21 500 FCFA à BAYAMSAFE. Entrez votre code PIN pour confirmer :</span><div class="pin">••••</div></div>
+                <button class="sim-btn" type="button" data-next data-i18n="s1_btn">Valider avec le code PIN</button>
+              </div>
+              <div class="step" data-step="2">
+                <div class="big-lock"><svg width="120" height="120" viewBox="0 0 200 200" aria-hidden="true"><g class="shackle"><path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="#12201A" stroke-width="16" stroke-linecap="round"></path></g><rect x="40" y="88" width="120" height="94" rx="24" fill="#0B6B3A"></rect><polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon></svg></div>
+                <div class="state"><b data-i18n="s2_title">Argent bloqué</b><span data-i18n="s2_sub">Le vendeur est prévenu. Un livreur moto à 1,2 km accepte la course.</span></div>
+                <button class="sim-btn" type="button" data-next data-i18n="s2_btn">Le livreur arrive chez le client</button>
+              </div>
+              <div class="step" data-step="3">
+                <div class="state"><b data-i18n="s3_title">Le client vérifie le colis</b><span data-i18n="s3_sub">Bonne taille, bonne couleur. Il donne son code au livreur.</span></div>
+                <div class="code-plaque"><span class="mono" style="font-size:11px;letter-spacing:.14em;color:#A9B8AD" data-i18n="s3_code">CODE DE LIBÉRATION</span><div class="digits"><span>8</span><span>8</span><span>9</span><span>7</span></div></div>
+                <button class="sim-btn gold" type="button" data-next data-i18n="s3_btn">Le livreur saisit le code</button>
+              </div>
+              <div class="step" data-step="4">
+                <div class="big-lock open"><svg width="120" height="120" viewBox="0 0 200 200" aria-hidden="true"><g class="shackle"><path d="M64 94 V70 A36 36 0 0 1 136 70 V94" fill="none" stroke="#12201A" stroke-width="16" stroke-linecap="round"></path></g><rect x="40" y="88" width="120" height="94" rx="24" fill="#0B6B3A"></rect><polygon points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon></svg></div>
+                <div class="payouts">
+                  <div><span data-i18n="s4_seller">Vendeur (votre MoMo)</span><span class="amt">+19 500</span></div>
+                  <div><span data-i18n="s4_rider">Livreur</span><span class="amt">+1 500</span></div>
+                </div>
+                <button class="sim-btn" type="button" data-restart data-i18n="s4_btn">Rejouer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="meter" aria-label="Où est l’argent" role="group">
+          <div class="slot hot" data-slot="0"><span data-i18n="m_buyer">Client</span><b>21 500</b></div>
+          <div class="slot" data-slot="1"><span data-i18n="m_vault">Sous clé</span><b>0</b></div>
+          <div class="slot" data-slot="2"><span data-i18n="m_seller">Vendeur</span><b>0</b></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="strip">
+    <div class="wrap">
+      <span><b>MTN MoMo</b> · <b>Orange Money</b></span>
+      <span data-i18n="strip_cities">Douala · Yaoundé · Bamenda · Buea · Bafoussam</span>
+      <span data-i18n="strip_channels">Pour les vendeurs WhatsApp, TikTok, Facebook, Instagram</span>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow" data-i18n="fear_eyebrow">Le problème</span>
+        <h2 data-i18n="fear_h2">Trois peurs bloquent chaque vente en ligne</h2>
+      </div>
+      <div class="fears">
+        <article class="fear">
+          <span class="who" data-i18n="f1_who">Le vendeur</span>
+          <q data-i18n="f1_q">Il a commandé, le livreur est parti, et maintenant il ne décroche plus.</q>
+          <p class="fix" data-i18n-html="f1_fix"><b>Avec BayamSafe :</b> le client paie avant que le colis parte. Pas d’argent bloqué, pas de livraison.</p>
+        </article>
+        <article class="fear">
+          <span class="who" data-i18n="f2_who">L’acheteur</span>
+          <q data-i18n="f2_q">Et si je paie d’avance et que je ne reçois rien, ou pas la bonne chose ?</q>
+          <p class="fix" data-i18n-html="f2_fix"><b>Avec BayamSafe :</b> l’argent est sous clé. Le vendeur n’est payé que quand vous donnez votre code, après avoir vérifié.</p>
+        </article>
+        <article class="fear">
+          <span class="who" data-i18n="f3_who">Les deux</span>
+          <q data-i18n="f3_q">Et le livreur, qui le connaît ? Il peut garder le colis ou l’argent.</q>
+          <p class="fix" data-i18n-html="f3_fix"><b>Avec BayamSafe :</b> chaque livreur est vérifié (photo, CNI, plaque). Pour le cash à la livraison, sa caution couvre la valeur du colis.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="night climb" id="comment">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow" data-i18n="how_eyebrow">Comment ça marche</span>
+        <h2 data-i18n="how_h2">Chaque vente est une montée vers le sommet</h2>
+        <p class="lede" data-i18n="how_lede">Comme sur le Mont Cameroun : on avance étape par étape, et au sommet, le cadenas s’ouvre.</p>
+      </div>
+      <svg class="climb-svg" id="climbSvg" viewBox="0 0 1000 180" aria-hidden="true">
+        <path d="M0 180 L0 168 L190 140 L400 150 L590 96 L780 106 L960 30 L1000 44 L1000 180 Z" fill="#0B6B3A" opacity="0.28"></path>
+        <path d="M10 166 L190 140 L400 150 L590 96 L780 106 L960 30" fill="none" stroke="#2A3B31" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path class="path" d="M10 166 L190 140 L400 150 L590 96 L780 106 L960 30" fill="none" stroke="#F2B705" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></path>
+        <g fill="#0F1A14" stroke="#F2B705" stroke-width="4"><circle cx="190" cy="140" r="9"></circle><circle cx="400" cy="150" r="9"></circle><circle cx="590" cy="96" r="9"></circle><circle cx="780" cy="106" r="9"></circle></g>
+        <polygon transform="translate(960 30) scale(1.4) translate(-100 -130)" points="100,110 105.29,124.72 120.92,125.2 108.56,134.78 112.93,149.8 100,141 87.07,149.8 91.44,134.78 79.08,125.2 94.71,124.72" fill="#F2B705"></polygon>
+      </svg>
+      <ol class="steps">
+        <li><span class="n">01</span><h3 data-i18n="st1_t">Créez la vente</h3><p data-i18n="st1_d">Dans le bot Telegram : article, prix, numéro du client. 30 secondes.</p></li>
+        <li><span class="n">02</span><h3 data-i18n="st2_t">Partagez le lien</h3><p data-i18n="st2_d">Un bouton l’envoie sur WhatsApp. Le client voit votre badge et le montant exact.</p></li>
+        <li><span class="n">03</span><h3 data-i18n="st3_t">Il paie, c’est bloqué</h3><p data-i18n="st3_d">MoMo ou Orange Money. Il épingle sa position GPS et laisse une note vocale pour le livreur.</p></li>
+        <li><span class="n">04</span><h3 data-i18n="st4_t">Un livreur vérifié livre</h3><p data-i18n="st4_d">Le livreur moto le plus proche accepte. Vous suivez chaque étape dans le bot.</p></li>
+        <li><span class="n">05</span><h3 data-i18n="st5_t">Code donné, vous êtes payé</h3><p data-i18n="st5_d">Le client vérifie, donne son code à 4 chiffres. L’argent part sur votre Mobile Money.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow" data-i18n="feat_eyebrow">Fait pour le Cameroun</span>
+        <h2 data-i18n="feat_h2">Pensé pour la façon dont on vend vraiment ici</h2>
+      </div>
+      <div class="feature-grid">
+        <article class="feature dark">
+          <div class="ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#F2B705" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="11" rx="2"></rect><path d="M7 18v2M17 18v2M3 12h18M8 7V5h8v2"></path></svg></div>
+          <h3 data-i18n="ft1_t">Livraison entre villes par l’agence de bus</h3>
+          <p class="muted" data-i18n="ft1_d">Un livreur dépose le colis à l’agence que vous utilisez déjà, photographie le bordereau, et un autre livreur le prend à l’arrivée. Le client paie toujours en sécurité, même à 300 km.</p>
+          <div class="route"><span>Douala</span>→<span>Yaoundé</span>→<span data-i18n="ft1_door">porte du client</span></div>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0B6B3A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"></path><circle cx="12" cy="10" r="2.5"></circle></svg></div>
+          <h3 data-i18n="ft2_t">« Portail bleu, face pharmacie »</h3>
+          <p class="muted" data-i18n="ft2_d">Pas d’adresse ? Pas de problème. Le client épingle sa position GPS, écrit son repère et enregistre 15 secondes d’indications en français ou en pidgin. Le livreur a l’itinéraire en un clic.</p>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0B6B3A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"></path><path d="M8.5 12l2.5 2.5 4.5-5"></path></svg></div>
+          <h3 data-i18n="ft3_t">Badge Vendeur vérifié</h3>
+          <p class="muted" data-i18n="ft3_d">Envoyez votre CNI, une photo de vous et de votre boutique. Après vérification, chaque client voit le badge sur votre lien de paiement. La confiance se voit avant même de payer.</p>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0B6B3A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle><path d="M6 12h.01M18 12h.01"></path></svg></div>
+          <h3 data-i18n="ft4_t">Cash à la livraison, sans risque</h3>
+          <p class="muted" data-i18n="ft4_d">Votre client préfère payer en cash ? Seul un livreur dont la caution couvre le prix de l’article peut accepter. Vous êtes payé sur votre MoMo dès la livraison confirmée.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow" data-i18n="calc_eyebrow">Faites le calcul</span>
+        <h2 data-i18n="calc_h2">Combien vous coûtent les faux clients ?</h2>
+        <p class="lede" data-i18n="calc_lede">Entrez vos propres chiffres. Le calcul se fait sur votre téléphone, rien n’est envoyé.</p>
+      </div>
+      <div class="calc">
+        <form class="calc-in" id="calcForm" onsubmit="return false">
+          <div class="field">
+            <label for="cOrders"><span data-i18n="c_orders">Commandes par mois</span><output id="oOrders" for="cOrders">60</output></label>
+            <input type="range" id="cOrders" min="5" max="500" step="5" value="60">
+          </div>
+          <div class="field">
+            <label for="cBasket"><span data-i18n="c_basket">Prix moyen d’un article</span><output id="oBasket" for="cBasket">15 000 FCFA</output></label>
+            <input type="range" id="cBasket" min="1000" max="150000" step="1000" value="15000">
+          </div>
+          <div class="field">
+            <label for="cLost"><span data-i18n="c_lost">Commandes perdues (faux clients, refus, injoignables)</span><output id="oLost" for="cLost">15 %</output></label>
+            <input type="range" id="cLost" min="0" max="50" step="1" value="15">
+            <small data-i18n="c_lost_hint">Valeur d’exemple : mettez la vôtre.</small>
+          </div>
+          <div class="field">
+            <label for="cWasted"><span data-i18n="c_wasted">Frais perdus par commande ratée (moto, emballage)</span><output id="oWasted" for="cWasted">1 500 FCFA</output></label>
+            <input type="range" id="cWasted" min="0" max="10000" step="250" value="1500">
+          </div>
+        </form>
+        <div class="calc-out" aria-live="polite">
+          <div class="row"><span class="lbl" data-i18n="c_out_loss">Ventes et frais perdus chaque mois aujourd’hui</span><span class="val loss" id="vLoss">0 FCFA</span></div>
+          <div class="row"><span class="lbl" data-i18n="c_out_fee">Commission BayamSafe sur vos ventes livrées (2,5 %)</span><span class="val fee" id="vFee">0 FCFA</span></div>
+          <hr>
+          <p class="note" data-i18n="c_note">Avec le paiement d’avance, un client qui ne paie pas ne coûte plus rien : le colis ne part pas. Si un client refuse un colis conforme, la course du livreur est prise sur ce qu’il a payé, pas sur votre poche.</p>
+          <a class="btn btn-gold js-merchant" href="#commencer" data-i18n="cta_merchant">Créer mon compte vendeur</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="night" id="tarifs">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow" data-i18n="price_eyebrow">Tarifs</span>
+        <h2 data-i18n="price_h2">Un seul prix. Seulement quand vous êtes payé.</h2>
+      </div>
+      <div class="pricing">
+        <div class="price-card">
+          <span class="pct">2,5<sup>%</sup></span>
+          <p style="font-size:18px" data-i18n="price_sub">du prix de l’article, prélevés sur la vente une fois livrée.</p>
+          <ul>
+            <li><svg width="22" height="22" aria-hidden="true" style="flex:none;color:#F2B705"><use href="#check"></use></svg><span data-i18n="pr1">Pas d’abonnement, pas de frais d’inscription</span></li>
+            <li><svg width="22" height="22" aria-hidden="true" style="flex:none;color:#F2B705"><use href="#check"></use></svg><span data-i18n="pr2">Vente annulée ou remboursée : aucune commission</span></li>
+            <li><svg width="22" height="22" aria-hidden="true" style="flex:none;color:#F2B705"><use href="#check"></use></svg><span data-i18n="pr3">Les frais de livraison vont au livreur, pas à nous</span></li>
+          </ul>
+        </div>
+        <div class="receipt" aria-label="Exemple de vente">
+          <span class="head-r" data-i18n="rc_title">Exemple : une robe à 20 000 FCFA</span>
+          <div class="r"><span data-i18n="rc_buyer">Le client paie</span><span>21 500</span></div>
+          <div class="r muted"><span data-i18n="rc_item">· article</span><span>20 000</span></div>
+          <div class="r muted"><span data-i18n="rc_delivery">· livraison</span><span>1 500</span></div>
+          <div class="r t"><span data-i18n="rc_you">Vous recevez</span><span style="color:#0B6B3A">19 500</span></div>
+          <div class="r"><span data-i18n="rc_rider">Le livreur reçoit</span><span>1 500</span></div>
+          <div class="r"><span>BayamSafe (2,5 %)</span><span>500</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="livreurs">
+    <div class="wrap riders" style="background:var(--night);color:var(--night-ink);border-radius:36px;padding:clamp(28px,5vw,64px)">
+      <div>
+        <span class="eyebrow" style="color:var(--gold)" data-i18n="rd_eyebrow">Livreurs moto</span>
+        <h2 style="margin-top:14px" data-i18n="rd_h2">Des courses près de vous. Payé dès la livraison.</h2>
+        <ul class="rider-perks">
+          <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd1"><b>Les courses viennent à vous</b>Partagez votre position, le bot vous propose les colis les plus proches.</span></li>
+          <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd2"><b>Payé sur votre MoMo / OM</b>Dès que le client donne son code, votre course part sur votre téléphone.</span></li>
+          <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd3"><b>Inscription en 3 minutes dans Telegram</b>Votre selfie, votre CNI, votre plaque. On vérifie, et vous roulez.</span></li>
+        </ul>
+        <a class="btn btn-gold js-rider" href="#commencer"><svg width="20" height="20" aria-hidden="true"><use href="#tg"></use></svg><span data-i18n="cta_rider">Devenir livreur</span></a>
+      </div>
+      <div class="badge" aria-label="Carte livreur BayamSafe">
+        <div class="top"><svg width="28" height="28" aria-hidden="true"><use href="#lock-rev"></use></svg><span data-i18n="badge_title">Livreur vérifié</span></div>
+        <div class="body">
+          <div class="photo" data-i18n="badge_photo">[Votre photo]</div>
+          <div><div class="nm" data-i18n="badge_name">[Votre nom]</div><div class="k" data-i18n="badge_plate">Plaque</div><div class="v">LT-000-AA</div><div class="k" data-i18n="badge_id">N° livreur</div><div class="v">BSR-0000</div></div>
+        </div>
+        <div class="foot"><span>Douala</span><span data-i18n="badge_verify">Vérifiable dans le bot</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" style="padding-top:0">
+    <div class="wrap">
+      <div class="section-head"><span class="eyebrow">FAQ</span><h2 data-i18n="faq_h2">Vos questions</h2></div>
+      <div class="faq">
+        <details><summary data-i18n="q1">Où est l’argent pendant la livraison ?</summary><p data-i18n="a1">Il est encaissé par notre prestataire de paiement Mobile Money et enregistré dans le compte de séquestre de la commande. Personne ne peut le toucher tant que le client n’a pas donné son code ou qu’un litige n’est pas tranché.</p></details>
+        <details><summary data-i18n="q2">Que se passe-t-il si le client refuse le colis ?</summary><p data-i18n="a2">La commande passe en litige et l’argent reste bloqué. Notre équipe écoute les deux côtés. Si le colis était conforme, vous êtes payé ; sinon le client est remboursé, et le livreur garde le prix des trajets qu’il a vraiment faits.</p></details>
+        <details><summary data-i18n="q3">Quand est-ce que je reçois mon argent ?</summary><p data-i18n="a3">Le versement vers votre MTN MoMo ou Orange Money part automatiquement dès que le livreur saisit le bon code du client.</p></details>
+        <details><summary data-i18n="q4">Le vendeur peut-il voir le code du client ?</summary><p data-i18n="a4">Non. Le code s’affiche uniquement sur le téléphone qui a fait le paiement. Ni le vendeur ni le livreur ne peuvent le voir.</p></details>
+        <details><summary data-i18n="q5">Mon client n’a pas Telegram. C’est un problème ?</summary><p data-i18n="a5">Non. Seuls le vendeur et le livreur utilisent Telegram. Votre client reçoit un simple lien (par WhatsApp, SMS, Messenger) qui s’ouvre dans n’importe quel navigateur.</p></details>
+        <details><summary data-i18n="q6">Dans quelles villes ?</summary><p data-i18n="a6">Livraison moto dans la même ville à Douala, Yaoundé, Bamenda, Buea et Bafoussam selon les livreurs inscrits, et entre villes via les agences de voyage.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="final" id="commencer">
+    <div class="wrap">
+      <svg width="72" height="72" aria-hidden="true"><use href="#lock-rev"></use></svg>
+      <h2 data-i18n="final_h2">Votre prochaine vente peut être la première sans stress.</h2>
+      <p data-i18n="final_p">Ouvrez le bot, partagez votre numéro Mobile Money, et créez votre premier lien protégé.</p>
+      <div class="ctas">
+        <a class="btn btn-gold js-merchant" href="#commencer"><svg width="20" height="20" aria-hidden="true"><use href="#tg"></use></svg><span data-i18n="cta_merchant">Créer mon compte vendeur</span></a>
+        <a class="btn btn-ghost js-rider" href="#commencer" data-i18n="cta_rider">Devenir livreur</a>
+      </div>
+      <p class="mono" id="botHint" style="font-size:13px;color:#D7EBDD"></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#top" style="font-size:18px"><svg width="26" height="26" aria-hidden="true"><use href="#lock"></use></svg><span>Bayam<span class="s">Safe</span></span></a>
+    <nav aria-label="Pied de page"><a href="#comment" data-i18n="nav_how">Comment ça marche</a><a href="#tarifs" data-i18n="nav_price">Tarifs</a><a href="#livreurs" data-i18n="nav_riders">Livreurs</a><a href="#faq">FAQ</a></nav>
+    <span>© 2026 BayamSafe · Cameroun</span>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const EN = {
+    nav_how: 'How it works', nav_price: 'Pricing', nav_riders: 'Riders', cta_short: 'Get started',
+    hero_eyebrow: 'Protected payments · MTN MoMo & Orange Money',
+    hero_h1: 'Sell online. <span class="gold">Get paid</span>, guaranteed.',
+    hero_lede: 'Your buyer pays upfront with Mobile Money. BayamSafe keeps the money under lock while the rider brings the parcel. The buyer checks it, gives their code, and you get paid. No more fake buyers, no more “I’ll pay on delivery” who stop picking up.',
+    cta_merchant: 'Create my seller account', cta_try: 'Try it in 20 seconds', cta_rider: 'Become a rider',
+    proof_1: 'No subscription', proof_2: 'Sign up on Telegram', proof_3: 'Paid to your MoMo / OM',
+    sim_label: 'Simulator · one sale, start to finish',
+    s0_msg: 'Here is the protected payment link for your dress 👇', s0_card: 'Protected payment',
+    s0_reply: 'So the money stays locked until delivery? I’ll pay now.', s0_btn: 'The buyer opens the link and pays',
+    s1_ussd: 'Payment of 21,500 FCFA to BAYAMSAFE. Enter your PIN to confirm:', s1_btn: 'Confirm with PIN',
+    s2_title: 'Money locked', s2_sub: 'The seller is notified. A moto rider 1.2 km away accepts the job.', s2_btn: 'The rider reaches the buyer',
+    s3_title: 'The buyer checks the parcel', s3_sub: 'Right size, right colour. They give the rider their code.', s3_code: 'RELEASE CODE', s3_btn: 'The rider enters the code',
+    s4_seller: 'Seller (your MoMo)', s4_rider: 'Rider', s4_btn: 'Replay',
+    m_buyer: 'Buyer', m_vault: 'Locked', m_seller: 'Seller',
+    strip_cities: 'Douala · Yaoundé · Bamenda · Buea · Bafoussam', strip_channels: 'For WhatsApp, TikTok, Facebook and Instagram sellers',
+    fear_eyebrow: 'The problem', fear_h2: 'Three fears block every online sale',
+    f1_who: 'The seller', f1_q: 'They ordered, the rider left, and now they don’t pick up.', f1_fix: '<b>With BayamSafe:</b> the buyer pays before the parcel leaves. No locked money, no delivery.',
+    f2_who: 'The buyer', f2_q: 'What if I pay upfront and get nothing, or the wrong thing?', f2_fix: '<b>With BayamSafe:</b> the money is locked. The seller is only paid when you give your code, after checking.',
+    f3_who: 'Both', f3_q: 'And the rider, who knows him? He could keep the parcel or the cash.', f3_fix: '<b>With BayamSafe:</b> every rider is verified (photo, ID, plate). For cash on delivery, their deposit covers the item’s value.',
+    how_eyebrow: 'How it works', how_h2: 'Every sale is a climb to the summit', how_lede: 'Like on Mount Cameroon: step by step, and at the summit the lock opens.',
+    st1_t: 'Create the sale', st1_d: 'In the Telegram bot: item, price, buyer’s number. 30 seconds.',
+    st2_t: 'Share the link', st2_d: 'One button sends it on WhatsApp. The buyer sees your badge and the exact amount.',
+    st3_t: 'They pay, it’s locked', st3_d: 'MoMo or Orange Money. They drop a GPS pin and leave a voice note for the rider.',
+    st4_t: 'A verified rider delivers', st4_d: 'The nearest moto rider accepts. You follow every step in the bot.',
+    st5_t: 'Code given, you’re paid', st5_d: 'The buyer checks and gives their 4-digit code. The money goes to your Mobile Money.',
+    feat_eyebrow: 'Made for Cameroon', feat_h2: 'Built for how people really sell here',
+    ft1_t: 'Inter-city delivery through the bus agency', ft1_d: 'A rider drops the parcel at the agency you already use and photographs the waybill; another rider collects it on arrival. The buyer still pays safely, even 300 km away.', ft1_door: 'buyer’s door',
+    ft2_t: '“Blue gate, opposite the pharmacy”', ft2_d: 'No street address? No problem. The buyer drops a GPS pin, writes a landmark and records 15 seconds of directions in French or Pidgin. The rider gets the route in one tap.',
+    ft3_t: 'Verified seller badge', ft3_d: 'Send your ID, a photo of yourself and of your shop. Once checked, every buyer sees the badge on your payment link. Trust shows before they even pay.',
+    ft4_t: 'Cash on delivery, without the risk', ft4_d: 'Buyer prefers cash? Only a rider whose deposit covers the item price can accept. You’re paid to your MoMo as soon as delivery is confirmed.',
+    calc_eyebrow: 'Do the maths', calc_h2: 'How much do fake buyers cost you?', calc_lede: 'Enter your own numbers. It’s calculated on your phone; nothing is sent.',
+    c_orders: 'Orders per month', c_basket: 'Average item price', c_lost: 'Lost orders (fake buyers, refusals, unreachable)', c_lost_hint: 'Example value: use your own.', c_wasted: 'Costs lost per failed order (moto, packaging)',
+    c_out_loss: 'Sales and costs lost each month today', c_out_fee: 'BayamSafe commission on your delivered sales (2.5%)',
+    c_note: 'With upfront payment, a buyer who doesn’t pay costs you nothing: the parcel never leaves. If a buyer refuses a correct parcel, the rider’s fee comes out of what they paid, not your pocket.',
+    price_eyebrow: 'Pricing', price_h2: 'One price. Only when you get paid.', price_sub: 'of the item price, taken from the sale once delivered.',
+    pr1: 'No subscription, no sign-up fee', pr2: 'Cancelled or refunded sale: no commission', pr3: 'Delivery fees go to the rider, not us',
+    rc_title: 'Example: a 20,000 FCFA dress', rc_buyer: 'Buyer pays', rc_item: '· item', rc_delivery: '· delivery', rc_you: 'You receive', rc_rider: 'Rider receives',
+    rd_eyebrow: 'Moto riders', rd_h2: 'Jobs near you. Paid on delivery.',
+    rd1: '<b>Jobs come to you</b>Share your location and the bot offers you the closest parcels.',
+    rd2: '<b>Paid to your MoMo / OM</b>As soon as the buyer gives their code, your fee goes to your phone.',
+    rd3: '<b>Sign up in 3 minutes in Telegram</b>Your selfie, your ID, your plate. We check, and you ride.',
+    badge_title: 'Verified rider', badge_photo: '[Your photo]', badge_name: '[Your name]', badge_plate: 'Plate', badge_id: 'Rider no.', badge_verify: 'Verifiable in the bot',
+    faq_h2: 'Your questions',
+    q1: 'Where is the money during delivery?', a1: 'It is collected by our Mobile Money payment provider and recorded in the order’s escrow account. Nobody can touch it until the buyer gives their code or a dispute is settled.',
+    q2: 'What if the buyer refuses the parcel?', a2: 'The order goes into dispute and the money stays locked. Our team hears both sides. If the parcel was correct, you are paid; otherwise the buyer is refunded, and the rider keeps the fee for the trips actually made.',
+    q3: 'When do I get my money?', a3: 'The payout to your MTN MoMo or Orange Money is sent automatically as soon as the rider enters the buyer’s correct code.',
+    q4: 'Can the seller see the buyer’s code?', a4: 'No. The code is only shown on the phone that made the payment. Neither the seller nor the rider can see it.',
+    q5: 'My buyer doesn’t use Telegram. Is that a problem?', a5: 'No. Only sellers and riders use Telegram. Your buyer gets a simple link (by WhatsApp, SMS, Messenger) that opens in any browser.',
+    q6: 'Which cities?', a6: 'Same-city moto delivery in Douala, Yaoundé, Bamenda, Buea and Bafoussam depending on registered riders, and between cities via travel agencies.',
+    final_h2: 'Your next sale can be your first stress-free one.', final_p: 'Open the bot, share your Mobile Money number, and create your first protected link.'
+  };
+
+  const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+  const FR = {};
+  document.querySelectorAll('[data-i18n]').forEach((el) => (FR[el.dataset.i18n] = el.textContent));
+  document.querySelectorAll('[data-i18n-html]').forEach((el) => (FR[el.dataset.i18nHtml] = el.innerHTML));
+  let lang = store.get('bs_lang') || ((navigator.language || 'fr').startsWith('en') ? 'en' : 'fr');
+  const fmt = (n) => Math.round(n).toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US') + ' FCFA';
+
+  function applyLang() {
+    const dict = lang === 'en' ? EN : FR;
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n]').forEach((el) => { const v = dict[el.dataset.i18n]; if (v) el.textContent = v; });
+    document.querySelectorAll('[data-i18n-html]').forEach((el) => { const v = dict[el.dataset.i18nHtml]; if (v) el.innerHTML = v; });
+    const btn = document.getElementById('langBtn');
+    btn.textContent = lang === 'fr' ? 'EN' : 'FR';
+    btn.setAttribute('aria-label', lang === 'fr' ? 'Switch to English' : 'Passer en français');
+    calc();
+  }
+  document.getElementById('langBtn').addEventListener('click', () => { lang = lang === 'fr' ? 'en' : 'fr'; store.set('bs_lang', lang); applyLang(); });
+
+  // ---------- Telegram deep links
+  fetch('/api/config').then((r) => (r.ok ? r.json() : {})).then((cfg) => {
+    if (!cfg.botUsername) {
+      document.getElementById('botHint').textContent = lang === 'fr' ? 'Bot Telegram bientôt disponible.' : 'Telegram bot coming soon.';
+      return;
+    }
+    const base = 'https://t.me/' + encodeURIComponent(cfg.botUsername);
+    document.querySelectorAll('.js-merchant').forEach((a) => { a.href = base + '?start=merchant'; a.target = '_blank'; a.rel = 'noopener'; });
+    document.querySelectorAll('.js-rider').forEach((a) => { a.href = base + '?start=rider'; a.target = '_blank'; a.rel = 'noopener'; });
+    document.getElementById('botHint').textContent = '@' + cfg.botUsername;
+  }).catch(() => {});
+
+  // ---------- Escrow simulator
+  const steps = [...document.querySelectorAll('.step')];
+  const ridge = document.getElementById('simRidge');
+  const slots = [...document.querySelectorAll('.meter .slot')];
+  const meterState = [[21500, 0, 0], [21500, 0, 0], [0, 21500, 0], [0, 21500, 0], [0, 0, 19500]];
+  let cur = 0;
+  function show(i) {
+    cur = i;
+    steps.forEach((s, k) => s.classList.toggle('on', k === i));
+    ridge.style.strokeDashoffset = String(320 - (320 * i) / 4);
+    const m = meterState[i];
+    slots.forEach((s, k) => {
+      s.querySelector('b').textContent = m[k].toLocaleString('fr-FR');
+      s.classList.toggle('hot', m[k] > 0);
+    });
+    const lock = steps[i].querySelector('.big-lock');
+    if (lock && i === 4) { lock.classList.remove('open'); requestAnimationFrame(() => requestAnimationFrame(() => lock.classList.add('open'))); }
+  }
+  document.querySelectorAll('[data-next]').forEach((b) => b.addEventListener('click', () => show(Math.min(cur + 1, 4))));
+  document.querySelectorAll('[data-restart]').forEach((b) => b.addEventListener('click', () => show(0)));
+
+  // ---------- Loss calculator
+  const $ = (id) => document.getElementById(id);
+  function calc() {
+    const orders = +$('cOrders').value, basket = +$('cBasket').value, lost = +$('cLost').value / 100, wasted = +$('cWasted').value;
+    $('oOrders').textContent = orders;
+    $('oBasket').textContent = fmt(basket);
+    $('oLost').textContent = Math.round(lost * 100) + ' %';
+    $('oWasted').textContent = fmt(wasted);
+    const lostOrders = orders * lost;
+    $('vLoss').textContent = fmt(lostOrders * basket + lostOrders * wasted);
+    $('vFee').textContent = fmt(orders * (1 - lost) * basket * 0.025);
+  }
+  ['cOrders', 'cBasket', 'cLost', 'cWasted'].forEach((id) => $(id).addEventListener('input', calc));
+
+  // ---------- Ridge draws as you scroll through "how it works"
+  const climb = document.getElementById('climbSvg');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function onScroll() {
+    if (reduce) { climb.style.setProperty('--draw', '0'); return; }
+    const r = climb.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const p = Math.min(1, Math.max(0, (vh - r.top) / (vh * 0.7)));
+    climb.style.setProperty('--draw', String(1600 * (1 - p)));
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  applyLang();
+})();
+</script>
+</body>
+</html>

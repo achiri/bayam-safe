@@ -69,6 +69,8 @@ export interface BuyerView {
   releaseCode?: string;
   /** True when the order is paid but this device is not the one that paid. */
   releaseCodeOnOtherDevice: boolean;
+  /** The rider currently carrying the parcel, so the buyer knows who will knock. */
+  rider?: { firstName: string; plateNumber: string; riderCode: string; vehicleType: string; hasPhoto: boolean };
   dispute?: Pick<Dispute, 'reason' | 'openedAt' | 'resolution'>;
 }
 
@@ -130,6 +132,8 @@ export class OrderService {
   // ------------------------------------------------------------------ creation
 
   async createOrder(merchant: User, input: CreateOrderInput): Promise<{ order: Order; buyerToken: string; checkoutUrl: string }> {
+    if (merchant.kycStatus === 'NONE') throw new AppError('PROFILE_INCOMPLETE', 'Complete your seller profile first (/start).', 403);
+    if (merchant.kycStatus === 'REJECTED') throw new AppError('PROFILE_REJECTED', 'Your seller profile was refused. Send /start to resubmit.', 403);
     if (!['INTRA_CITY', 'INTER_CITY'].includes(input.type)) throw invalid('Invalid order type');
     if (!['ESCROW', 'COD'].includes(input.paymentMode)) throw invalid('Invalid payment mode');
     if (input.type === 'INTER_CITY' && input.paymentMode === 'COD') {
@@ -216,7 +220,32 @@ export class OrderService {
         o = (await this.store.getOrder(orderId))!;
       }
     }
-    return this.toBuyerView(o, sessionToken);
+    return this.view(o, sessionToken);
+  }
+
+  /** The rider the buyer should expect right now, if any. */
+  async activeRider(o: Order): Promise<Rider | undefined> {
+    const id = ['RIDER_ASSIGNED', 'IN_TRANSIT'].includes(o.status)
+      ? o.firstMileRiderId
+      : ['LAST_MILE_ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)
+        ? o.lastMileRiderId
+        : undefined;
+    return id ? this.store.getRider(id) : undefined;
+  }
+
+  private async view(o: Order, sessionToken?: string): Promise<BuyerView> {
+    const v = this.toBuyerView(o, sessionToken);
+    const r = await this.activeRider(o);
+    if (r) {
+      v.rider = { firstName: r.fullName.split(' ')[0], plateNumber: r.plateNumber, riderCode: r.riderCode, vehicleType: r.vehicleType, hasPhoto: !!r.selfieFileId };
+    }
+    return v;
+  }
+
+  /** Buyer-authenticated access to the active rider's selfie file id. */
+  async riderPhotoFileId(orderId: string, buyerToken: string | undefined): Promise<string | undefined> {
+    const o = await this.requireBuyer(orderId, buyerToken);
+    return (await this.activeRider(o))?.selfieFileId;
   }
 
   private toBuyerView(o: Order, sessionToken?: string): BuyerView {
@@ -270,7 +299,7 @@ export class OrderService {
       if (patch.landmark !== undefined) o.landmark = optText(patch.landmark, 'Landmark', 200);
       o.updatedAt = new Date().toISOString();
     });
-    return this.toBuyerView(order);
+    return this.view(order);
   }
 
   async attachVoiceNote(orderId: string, buyerToken: string | undefined, mime: string, data: Buffer): Promise<void> {
@@ -408,7 +437,7 @@ export class OrderService {
   async buyerOpenDispute(orderId: string, buyerToken: string | undefined, reason: string): Promise<BuyerView> {
     await this.requireBuyer(orderId, buyerToken);
     const order = await this.openDispute(orderId, 'BUYER', reason);
-    return this.toBuyerView(order);
+    return this.view(order);
   }
 
   // ------------------------------------------------------------------ riders

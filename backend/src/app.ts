@@ -7,6 +7,7 @@ import { DispatchService } from './services/dispatch.service.js';
 import { EventBus } from './services/events.js';
 import { OrderService } from './services/order.service.js';
 import { RiderService } from './services/rider.service.js';
+import { FileFetcher, TelegramFiles } from './services/telegram-files.js';
 import { UserService } from './services/user.service.js';
 import { MemoryStore } from './storage/memory.js';
 import { PostgresStore, nodePostgresDriver } from './storage/postgres.js';
@@ -22,6 +23,8 @@ export interface App {
   riders: RiderService;
   orders: OrderService;
   dispatch: DispatchService;
+  /** Reads photos users sent to the bot (undefined when no bot token is configured). */
+  files?: FileFetcher;
   /** Routes a provider transaction reference to the order or float top-up it belongs to. */
   handlePaymentReference(reference: string): Promise<void>;
 }
@@ -42,10 +45,11 @@ export function createStore(config: AppConfig): Store {
   return config.DATABASE_URL ? new PostgresStore(nodePostgresDriver(config.DATABASE_URL)) : new MemoryStore();
 }
 
-export function createApp(config: AppConfig, overrides: { store?: Store; gateway?: PaymentGateway } = {}): App {
+export function createApp(config: AppConfig, overrides: { store?: Store; gateway?: PaymentGateway; files?: FileFetcher } = {}): App {
   const store = overrides.store ?? createStore(config);
   const gateway = overrides.gateway ?? createGateway(config);
   const events = new EventBus();
+  const files = overrides.files ?? (config.TELEGRAM_BOT_TOKEN ? new TelegramFiles(config.TELEGRAM_BOT_TOKEN) : undefined);
   const secrets = new Secrets(config.APP_SECRET);
   const users = new UserService(store, events);
   const riders = new RiderService(store, users, gateway, events);
@@ -66,7 +70,7 @@ export function createApp(config: AppConfig, overrides: { store?: Store; gateway
     }
   }
 
-  return { config, store, gateway, events, secrets, users, riders, orders, dispatch, handlePaymentReference };
+  return { config, store, gateway, events, secrets, users, riders, orders, dispatch, files, handlePaymentReference };
 }
 
 /** Background jobs: expire unpaid orders, retry payouts. Returns a stop function. */

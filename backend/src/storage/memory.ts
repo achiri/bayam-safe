@@ -106,6 +106,9 @@ class MemoryRepo implements Repo {
   async listUsersByKyc(status: User['kycStatus']) {
     return [...this.state.users.values()].filter((u) => u.kycStatus === status).map(clone);
   }
+  async listUsers(limit = 200) {
+    return [...this.state.users.values()].sort(byNewest).slice(0, limit).map(clone);
+  }
 
   async insertRider(r: Rider) {
     if (await this.getRiderByTelegram(r.telegramId)) throw new Error('duplicate rider');
@@ -117,6 +120,10 @@ class MemoryRepo implements Repo {
   }
   async getRiderByTelegram(telegramId: number) {
     const r = [...this.state.riders.values()].find((x) => x.telegramId === telegramId);
+    return r && clone(r);
+  }
+  async getRiderByCode(code: string) {
+    const r = [...this.state.riders.values()].find((x) => x.riderCode === code);
     return r && clone(r);
   }
   async updateRider(r: Rider) {
@@ -213,8 +220,10 @@ export class MemoryStore implements Store {
   getUser = (id: string) => this.repo.getUser(id);
   getUserByTelegram = (t: number) => this.repo.getUserByTelegram(t);
   listUsersByKyc = (s: User['kycStatus']) => this.repo.listUsersByKyc(s);
+  listUsers = (limit?: number) => this.repo.listUsers(limit);
   getRider = (id: string) => this.repo.getRider(id);
   getRiderByTelegram = (t: number) => this.repo.getRiderByTelegram(t);
+  getRiderByCode = (c: string) => this.repo.getRiderByCode(c);
   listRiders = (f: { status?: RiderStatus; onDuty?: boolean }) => this.repo.listRiders(f);
   ledgerBalance = (a: LedgerAccount, r?: string) => this.repo.ledgerBalance(a, r);
   listJournals = (r: string) => this.repo.listJournals(r);

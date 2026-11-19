@@ -1,18 +1,35 @@
 import { AppError, invalid, notFound } from '../domain/errors.js';
 import { assertGeoPoint } from '../domain/geo.js';
 import { assertAmount } from '../domain/money.js';
-import { newId } from '../domain/secrets.js';
+import { newId, newRiderCode } from '../domain/secrets.js';
 import { FloatTopup, GeoPoint, Rider, VehicleType } from '../domain/types.js';
 import { PaymentGateway, Transaction } from '../payments/gateway.js';
 import { Store } from '../storage/store.js';
 import { EventBus } from './events.js';
-import { UserService } from './user.service.js';
+import { UserService, normalizeIdNumber } from './user.service.js';
 
 export interface RiderApplication {
+  legalName: string;
   cniNumber: string;
+  selfieFileId: string;
+  cniFrontFileId: string;
+  cniBackFileId: string;
+  vehicleType: VehicleType;
+  plateNumber: string;
+  vehiclePhotoFileId: string;
+  city: string;
+}
+
+/** What anyone may learn about a rider from the number on their badge. */
+export interface PublicRiderCard {
+  riderCode: string;
+  firstName: string;
   plateNumber: string;
   vehicleType: VehicleType;
-  city: string;
+  city?: string;
+  verified: boolean;
+  completedDeliveries: number;
+  selfieFileId?: string;
 }
 
 export class RiderService {
@@ -34,48 +51,90 @@ export class RiderService {
     return r;
   }
 
-  /** Rider applies; an admin approves after checking the ID and plate in person. */
-  async apply(telegramId: number, app: RiderApplication): Promise<Rider> {
+  /**
+   * Rider applies with legal name, selfie, both sides of the ID card, vehicle and plate photo.
+   * An admin approves after comparing the selfie with the ID. A refused rider can resubmit.
+   */
+  async submitApplication(telegramId: number, app: RiderApplication): Promise<Rider> {
     const user = await this.users.require(telegramId);
-    if (await this.store.getRiderByTelegram(telegramId)) throw invalid('You already applied as a rider.');
-    const cni = app.cniNumber.replace(/\s/g, '').toUpperCase();
+    const existing = await this.store.getRiderByTelegram(telegramId);
+    if (existing && existing.status !== 'REJECTED') throw invalid(`You already have a rider account (${existing.status}).`);
+    const legalName = app.legalName.replace(/\s+/g, ' ').trim();
+    if (legalName.length < 4 || legalName.length > 80 || !legalName.includes(' ')) throw invalid('Enter your first and last name as on your ID card');
+    const cni = normalizeIdNumber(app.cniNumber);
     const plate = app.plateNumber.replace(/\s/g, '').toUpperCase();
-    if (!/^[A-Z0-9]{6,20}$/.test(cni)) throw invalid('Invalid ID number');
     if (!/^[A-Z0-9-]{4,12}$/.test(plate)) throw invalid('Invalid plate number');
+    if (!['MOTO', 'CAR', 'VAN'].includes(app.vehicleType)) throw invalid('Invalid vehicle type');
+    for (const k of ['selfieFileId', 'cniFrontFileId', 'cniBackFileId', 'vehiclePhotoFileId'] as const) {
+      if (!app[k]) throw invalid(`Missing ${k.replace('FileId', '')} photo`);
+    }
     const now = new Date().toISOString();
-    const rider: Rider = {
-      id: newId(),
-      version: 1,
-      userId: user.id,
-      telegramId,
-      fullName: user.fullName,
+    const fields = {
+      fullName: legalName,
       phone: user.phone,
       cniNumber: cni,
+      selfieFileId: app.selfieFileId,
+      cniFrontFileId: app.cniFrontFileId,
+      cniBackFileId: app.cniBackFileId,
+      vehiclePhotoFileId: app.vehiclePhotoFileId,
       plateNumber: plate,
       vehicleType: app.vehicleType,
-      city: app.city,
-      status: 'PENDING',
-      onDuty: false,
-      floatBalance: 0,
-      floatReserved: 0,
-      completedDeliveries: 0,
-      createdAt: now,
+      city: app.city.slice(0, 40),
+      status: 'PENDING' as const,
+      reviewNote: undefined,
       updatedAt: now
     };
-    await this.store.insertRider(rider);
+    let rider: Rider;
+    if (existing) {
+      rider = await this.store.updateRider({ ...existing, ...fields });
+    } else {
+      rider = {
+        id: newId(), version: 1, userId: user.id, telegramId, riderCode: await this.uniqueCode(),
+        onDuty: false, floatBalance: 0, floatReserved: 0, completedDeliveries: 0, createdAt: now, ...fields
+      };
+      await this.store.insertRider(rider);
+    }
+    if (user.draft?.kind === 'rider') await this.users.clearDraft(telegramId);
     this.events.emit({ type: 'rider.applied', rider });
     return rider;
   }
 
-  async decide(riderId: string, status: 'APPROVED' | 'SUSPENDED'): Promise<Rider> {
+  private async uniqueCode(): Promise<string> {
+    for (let i = 0; i < 10; i++) {
+      const code = newRiderCode();
+      if (!(await this.store.getRiderByCode(code))) return code;
+    }
+    throw new Error('Could not allocate a rider code');
+  }
+
+  async decide(riderId: string, status: 'APPROVED' | 'REJECTED' | 'SUSPENDED', note?: string): Promise<Rider> {
     const r = await this.store.getRider(riderId);
     if (!r) throw notFound('Rider');
+    if (status !== 'APPROVED' && !note?.trim()) throw invalid('Give the rider a reason');
     r.status = status;
-    if (status === 'SUSPENDED') r.onDuty = false;
-    r.updatedAt = new Date().toISOString();
+    r.reviewNote = status === 'APPROVED' ? undefined : note!.trim().slice(0, 300);
+    r.reviewedAt = new Date().toISOString();
+    if (status !== 'APPROVED') r.onDuty = false;
+    r.updatedAt = r.reviewedAt;
     const saved = await this.store.updateRider(r);
     this.events.emit({ type: 'rider.decided', rider: saved });
     return saved;
+  }
+
+  /** Public check of a rider badge number: at the door, a buyer can confirm who they are dealing with. */
+  async verifyCode(code: string): Promise<PublicRiderCard | undefined> {
+    const r = await this.store.getRiderByCode(code.trim().toUpperCase());
+    if (!r) return undefined;
+    return {
+      riderCode: r.riderCode,
+      firstName: r.fullName.split(' ')[0],
+      plateNumber: r.plateNumber,
+      vehicleType: r.vehicleType,
+      city: r.city,
+      verified: r.status === 'APPROVED',
+      completedDeliveries: r.completedDeliveries,
+      selfieFileId: r.status === 'APPROVED' ? r.selfieFileId : undefined
+    };
   }
 
   async setDuty(telegramId: number, onDuty: boolean): Promise<Rider> {

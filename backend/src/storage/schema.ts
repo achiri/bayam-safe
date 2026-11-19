@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS riders (
   created_at   TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_riders_dispatch ON riders (status, on_duty);
+ALTER TABLE riders ADD COLUMN IF NOT EXISTS rider_code TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_riders_code ON riders (rider_code);
 
 CREATE TABLE IF NOT EXISTS orders (
   id                   TEXT PRIMARY KEY,

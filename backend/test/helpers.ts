@@ -1,6 +1,6 @@
 import { App, createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { newId } from '../src/domain/secrets.js';
+import { newId, newRiderCode } from '../src/domain/secrets.js';
 import { Order, Rider, User } from '../src/domain/types.js';
 import { SimulatedGateway } from '../src/payments/simulated.js';
 import { CreateOrderInput } from '../src/services/order.service.js';
@@ -31,7 +31,7 @@ export async function makeMerchant(app: App, patch: Partial<User> = {}): Promise
   const now = new Date().toISOString();
   const u: User = {
     id: newId(), version: 1, telegramId: nextTg(), phone: `+2376700${String(tg).padStart(5, '0')}`,
-    fullName: 'Test Merchant', shopName: 'Test Shop', city: 'Douala', lang: 'fr', kycStatus: 'NONE',
+    fullName: 'Test Merchant', shopName: 'Test Shop', city: 'Douala', lang: 'fr', kycStatus: 'PENDING',
     createdAt: now, updatedAt: now, ...patch
   };
   await app.store.insertUser(u);
@@ -42,7 +42,7 @@ export async function makeRider(app: App, patch: Partial<Rider> = {}): Promise<R
   const user = await makeMerchant(app, { phone: `+2376910${String(tg + 1).padStart(5, '0')}` });
   const now = new Date().toISOString();
   const r: Rider = {
-    id: newId(), version: 1, userId: user.id, telegramId: user.telegramId, fullName: 'Test Rider', phone: user.phone,
+    id: newId(), version: 1, userId: user.id, telegramId: user.telegramId, riderCode: newRiderCode(), fullName: 'Test Rider', phone: user.phone, selfieFileId: 'selfie-file-id-0001',
     cniNumber: `CNI${user.telegramId}`, plateNumber: 'LT-123-AB', vehicleType: 'MOTO', city: 'Douala', status: 'APPROVED',
     onDuty: true, floatBalance: 0, floatReserved: 0, completedDeliveries: 0,
     location: { lat: 4.0511, lng: 9.7085 }, locationUpdatedAt: now, createdAt: now, updatedAt: now, ...patch

@@ -27,10 +27,12 @@ export interface Repo {
   getUserByTelegram(telegramId: number): Promise<User | undefined>;
   updateUser(u: User): Promise<User>;
   listUsersByKyc(status: User['kycStatus']): Promise<User[]>;
+  listUsers(limit?: number): Promise<User[]>;
 
   insertRider(r: Rider): Promise<void>;
   getRider(id: string): Promise<Rider | undefined>;
   getRiderByTelegram(telegramId: number): Promise<Rider | undefined>;
+  getRiderByCode(code: string): Promise<Rider | undefined>;
   updateRider(r: Rider): Promise<Rider>;
   listRiders(filter: { status?: RiderStatus; onDuty?: boolean }): Promise<Rider[]>;
 

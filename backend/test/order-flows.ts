@@ -300,21 +300,76 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       await rejects(app.orders.buyerView(order.id, 'wrong-token', sessionToken), 'NOT_FOUND');
     });
 
-    it('KYC badge requires admin approval; rider sign-up requires approval', async () => {
+    it('seller profile: no sales before submitting, badge only after admin approval, refusal needs a reason', async () => {
       const app = await fresh();
-      const merchant = await makeMerchant(app);
-      const pending = await app.users.submitKyc(merchant.telegramId, 'ab 1234567', 'photo');
+      const fresh1 = await makeMerchant(app, { kycStatus: 'NONE' });
+      await rejects(app.orders.createOrder(fresh1, intraInput()), 'PROFILE_INCOMPLETE');
+
+      await app.users.startDraft(fresh1.telegramId, 'merchant', 'shopName');
+      await app.users.saveDraft(fresh1.telegramId, { shopName: 'Chez Awa' }, 'city');
+      const mid = (await app.store.getUser(fresh1.id))!;
+      assert.equal(mid.draft?.step, 'city');
+      assert.equal(mid.draft?.data.shopName, 'Chez Awa');
+
+      const profile = {
+        shopName: 'Chez Awa', city: 'Douala', cniNumber: '1234 5678 9', selfieFileId: 'f-selfie', cniFrontFileId: 'f-front',
+        cniBackFileId: 'f-back', shopPhotoFileId: 'f-shop', shopLocation: { lat: 4.05, lng: 9.7 }
+      };
+      await assert.rejects(app.users.submitMerchantProfile(fresh1.telegramId, { ...profile, shopPhotoFileId: undefined }), /shop photo/);
+      await rejects(app.users.submitMerchantProfile(fresh1.telegramId, { ...profile, shopLocation: { lat: 48.8, lng: 2.3 } }), 'INVALID');
+      const pending = await app.users.submitMerchantProfile(fresh1.telegramId, profile);
       assert.equal(pending.kycStatus, 'PENDING');
+      assert.equal(pending.cniNumber, '123456789');
+      assert.equal(pending.draft, undefined);
       const { order } = await app.orders.createOrder(pending, intraInput());
       assert.equal(order.merchantVerified, false);
-      assert.equal((await app.users.decideKyc(merchant.id, true)).kycStatus, 'VERIFIED');
 
-      const applicantUser = await makeMerchant(app);
-      const rider = await app.riders.apply(applicantUser.telegramId, { cniNumber: '123456789', plateNumber: 'LT 123 AB', vehicleType: 'MOTO', city: 'Douala' });
+      await rejects(app.users.decideKyc(fresh1.id, false), 'INVALID');
+      const refused = await app.users.decideKyc(fresh1.id, false, 'Photos floues');
+      assert.equal(refused.kycNote, 'Photos floues');
+      await rejects(app.orders.createOrder(refused, intraInput()), 'PROFILE_REJECTED');
+      const again = await app.users.submitMerchantProfile(fresh1.telegramId, profile);
+      assert.equal((await app.users.decideKyc(again.id, true)).kycStatus, 'VERIFIED');
+    });
+
+    it('rider application: full documents, admin approval, public badge check, resubmission after refusal', async () => {
+      const app = await fresh();
+      const applicant = await makeMerchant(app, { kycStatus: 'NONE' });
+      const application = {
+        legalName: 'Moussa Njoya', cniNumber: '987654321', selfieFileId: 'r-selfie', cniFrontFileId: 'r-front', cniBackFileId: 'r-back',
+        vehicleType: 'MOTO' as const, plateNumber: 'lt 123 ab', vehiclePhotoFileId: 'r-moto', city: 'Douala'
+      };
+      await rejects(app.riders.submitApplication(applicant.telegramId, { ...application, legalName: 'Moussa' }), 'INVALID');
+      const rider = await app.riders.submitApplication(applicant.telegramId, application);
       assert.equal(rider.status, 'PENDING');
-      await rejects(app.riders.setDuty(applicantUser.telegramId, true), 'RIDER_NOT_APPROVED');
+      assert.equal(rider.plateNumber, 'LT123AB');
+      assert.match(rider.riderCode, /^BSR-[2-9A-HJKMNP-Z]{4}$/);
+      assert.equal((await app.riders.verifyCode(rider.riderCode))!.verified, false);
+      await rejects(app.riders.setDuty(applicant.telegramId, true), 'RIDER_NOT_APPROVED');
+      await rejects(app.riders.submitApplication(applicant.telegramId, application), 'INVALID');
+
+      await app.riders.decide(rider.id, 'REJECTED', 'Selfie flou');
+      const resubmitted = await app.riders.submitApplication(applicant.telegramId, { ...application, selfieFileId: 'r-selfie-2' });
+      assert.equal(resubmitted.status, 'PENDING');
+      assert.equal(resubmitted.riderCode, rider.riderCode);
       await app.riders.decide(rider.id, 'APPROVED');
-      assert.equal((await app.riders.setDuty(applicantUser.telegramId, true)).onDuty, true);
+      const card = (await app.riders.verifyCode(rider.riderCode.toLowerCase()))!;
+      assert.deepEqual([card.verified, card.firstName, card.selfieFileId], [true, 'Moussa', 'r-selfie-2']);
+      assert.equal(await app.riders.verifyCode('BSR-XXXX'), undefined);
+      assert.equal((await app.riders.setDuty(applicant.telegramId, true)).onDuty, true);
+    });
+
+    it('buyer sees who is delivering once a rider has the parcel', async () => {
+      const app = await fresh();
+      const merchant = await makeMerchant(app);
+      const rider = await makeRider(app);
+      const { order, buyerToken, sessionToken } = await paidOrder(app, merchant);
+      assert.equal((await app.orders.buyerView(order.id, buyerToken, sessionToken)).rider, undefined);
+      await app.orders.claim(rider.telegramId, order.id);
+      const view = await app.orders.buyerView(order.id, buyerToken, sessionToken);
+      assert.deepEqual(view.rider, { firstName: 'Test', plateNumber: 'LT-123-AB', riderCode: rider.riderCode, vehicleType: 'MOTO', hasPhoto: true });
+      assert.equal(await app.orders.riderPhotoFileId(order.id, buyerToken), 'selfie-file-id-0001');
+      await rejects(app.orders.riderPhotoFileId(order.id, 'nope'), 'NOT_FOUND');
     });
 
     it('contact sharing only registers the sender’s own number', async () => {

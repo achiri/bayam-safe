@@ -3,7 +3,7 @@ import path from 'node:path';
 import { App } from '../app.js';
 import { AppError, forbidden, invalid } from '../domain/errors.js';
 import { safeEqual } from '../domain/secrets.js';
-import { LedgerAccount, Order, OrderStatus } from '../domain/types.js';
+import { LedgerAccount, Order, OrderStatus, User } from '../domain/types.js';
 import { SimulatedGateway } from '../payments/simulated.js';
 import { rateLimit } from './rate-limit.js';
 
@@ -23,6 +23,12 @@ export function redactOrder(o: Order) {
   return { ...rest, payment };
 }
 
+/** Admin view of a user: drop the unfinished sign-up draft (raw answers) but keep documents' file ids. */
+export function redactUser(u: User) {
+  const { draft, ...rest } = u;
+  return { ...rest, signupInProgress: draft ? { kind: draft.kind, step: draft.step, startedAt: draft.startedAt } : undefined };
+}
+
 const ACCOUNTS: LedgerAccount[] = [
   'GATEWAY_CLEARING', 'ESCROW', 'MERCHANT_PAYABLE', 'RIDER_PAYABLE', 'BUYER_REFUND_PAYABLE', 'PLATFORM_REVENUE', 'RIDER_FLOAT'
 ];
@@ -31,6 +37,8 @@ export interface ServerOptions {
   /** Extra routes mounted before the error handler (e.g. Telegram webhook). */
   mount?: (app: express.Express) => void;
   webDir?: string;
+  /** Values the landing page may read (e.g. the bot username for t.me links). */
+  publicConfig?: () => { botUsername?: string };
 }
 
 export function createServer(appCtx: App, opts: ServerOptions = {}): express.Express {
@@ -47,33 +55,36 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     next();
   });
 
-  // ---------------------------------------------------------------- static checkout page
+  // ---------------------------------------------------------------- static pages (landing, checkout, admin)
   const webDir = opts.webDir ?? path.resolve(__dirname, '../../../web');
-  app.use(
-    express.static(webDir, {
-      index: false,
-      setHeaders: (res) => {
-        res.setHeader(
-          'Content-Security-Policy',
-          [
-            "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com",
-            "style-src 'self' 'unsafe-inline' https://unpkg.com",
-            "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://unpkg.com",
-            "media-src 'self' blob:",
-            "connect-src 'self'",
-            "frame-ancestors 'none'"
-          ].join('; ')
-        );
-      }
-    })
-  );
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com",
+    "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://unpkg.com",
+    "media-src 'self' blob:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'"
+  ].join('; ');
+  app.use(express.static(webDir, { index: false, setHeaders: (res) => res.setHeader('Content-Security-Policy', csp) }));
 
   const json = express.json({ limit: '20kb' });
 
   // ---------------------------------------------------------------- public
   app.get('/', (_req, res) => {
-    res.type('text/plain').send('BayamSafe API. Buyers open their private checkout link; merchants and riders use the Telegram bot.');
+    res.setHeader('Content-Security-Policy', csp);
+    res.sendFile(path.join(webDir, 'index.html'));
+  });
+
+  app.get('/admin', (_req, res) => {
+    res.setHeader('Content-Security-Policy', csp);
+    res.setHeader('X-Robots-Tag', 'noindex');
+    res.sendFile(path.join(webDir, 'admin.html'));
+  });
+
+  app.get('/api/config', (_req, res) => {
+    res.json({ botUsername: opts.publicConfig?.().botUsername ?? null });
   });
 
   app.get('/api/health', (_req, res) => {
@@ -123,6 +134,20 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     h(async (req, res) => {
       const result = await orders.initiatePayment(req.params.orderId, buyerToken(req), String(req.body?.payerPhone ?? ''));
       res.json(result);
+    })
+  );
+
+  /** Photo of the rider carrying this buyer's parcel, so they can recognise them at the door. */
+  app.get(
+    '/api/checkout/:orderId/rider-photo',
+    buyerLimiter,
+    h(async (req, res) => {
+      const fileId = await orders.riderPhotoFileId(req.params.orderId, buyerToken(req));
+      if (!fileId || !appCtx.files) throw new AppError('NOT_FOUND', 'No photo', 404);
+      const f = await appCtx.files.fetch(fileId);
+      res.setHeader('Content-Type', f.mime);
+      res.setHeader('Cache-Control', 'private, max-age=600');
+      res.send(f.data);
     })
   );
 
@@ -218,15 +243,104 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
       res.json(o ? redactOrder(o) : { ok: true });
     })
   );
-  admin.get('/kyc', h(async (_req, res) => res.json(await users.pendingKyc())));
-  admin.post('/users/:id/kyc', h(async (req, res) => res.json(await users.decideKyc(req.params.id, req.body?.approve === true))));
+  admin.get('/kyc', h(async (_req, res) => res.json((await users.pendingKyc()).map(redactUser))));
+  admin.get('/users', h(async (req, res) => res.json((await store.listUsers(Number(req.query.limit ?? 300))).map(redactUser))));
+  admin.get(
+    '/users/:id',
+    h(async (req, res) => {
+      const u = await store.getUser(req.params.id);
+      if (!u) throw new AppError('NOT_FOUND', 'User not found', 404);
+      const sales = await store.listOrders({ merchantId: u.id, limit: 50 });
+      res.json({ user: redactUser(u), orders: sales.map(redactOrder) });
+    })
+  );
+  admin.post(
+    '/users/:id/kyc',
+    h(async (req, res) => res.json(redactUser(await users.decideKyc(req.params.id, req.body?.approve === true, req.body?.note))))
+  );
   admin.get('/riders', h(async (req, res) => res.json(await store.listRiders({ status: req.query.status as any }))));
   admin.post(
     '/riders/:id/status',
     h(async (req, res) => {
       const status = req.body?.status;
-      if (status !== 'APPROVED' && status !== 'SUSPENDED') throw invalid('status must be APPROVED or SUSPENDED');
-      res.json(await riders.decide(req.params.id, status));
+      if (!['APPROVED', 'REJECTED', 'SUSPENDED'].includes(status)) throw invalid('status must be APPROVED, REJECTED or SUSPENDED');
+      res.json(await riders.decide(req.params.id, status, req.body?.note));
+    })
+  );
+
+  /** Streams a document a user sent to the bot (selfie, ID card, shop photo, waybill). */
+  admin.get(
+    '/files/:fileId',
+    h(async (req, res) => {
+      if (!appCtx.files) throw new AppError('UNAVAILABLE', 'Documents are only available when the Telegram bot is configured', 503);
+      const f = await appCtx.files.fetch(req.params.fileId);
+      res.setHeader('Content-Type', f.mime);
+      res.setHeader('Cache-Control', 'private, max-age=600');
+      res.send(f.data);
+    })
+  );
+
+  /** One call for the dashboard's home: money, queues, activity. */
+  admin.get(
+    '/overview',
+    h(async (_req, res) => {
+      const [recent, pendingKyc, riderList] = await Promise.all([
+        store.listOrders({ limit: 500 }),
+        users.pendingKyc(),
+        store.listRiders({})
+      ]);
+      const byStatus: Record<string, number> = {};
+      for (const o of recent) byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
+      const completed = recent.filter((o) => o.status === 'SETTLED' || o.status === 'DELIVERED');
+      const days: { day: string; orders: number; gmv: number }[] = [];
+      const today = new Date();
+      for (let i = 13; i >= 0; i--) {
+        const d = new Date(today.getTime() - i * 86_400_000).toISOString().slice(0, 10);
+        const dayOrders = recent.filter((o) => o.createdAt.slice(0, 10) === d);
+        days.push({ day: d, orders: dayOrders.length, gmv: dayOrders.filter((o) => completed.includes(o)).reduce((s, o) => s + o.total, 0) });
+      }
+      res.json({
+        money: {
+          escrowHeld: await store.ledgerBalance('ESCROW'),
+          revenue: await store.ledgerBalance('PLATFORM_REVENUE'),
+          gmvCompleted: completed.reduce((s, o) => s + o.total, 0),
+          riderFloat: await store.ledgerBalance('RIDER_FLOAT')
+        },
+        queues: {
+          kycPending: pendingKyc.length,
+          ridersPending: riderList.filter((r) => r.status === 'PENDING').length,
+          disputes: byStatus.DISPUTED ?? 0,
+          payoutsNeedingReview: recent.reduce((n, o) => n + o.payouts.filter((p) => p.status === 'NEEDS_REVIEW' || p.status === 'FAILED').length, 0)
+        },
+        fleet: {
+          approved: riderList.filter((r) => r.status === 'APPROVED').length,
+          onDuty: riderList.filter((r) => r.status === 'APPROVED' && r.onDuty).length
+        },
+        byStatus,
+        days,
+        sampleSize: recent.length
+      });
+    })
+  );
+
+  /** Everything the live map needs: on-duty riders and parcels on the move. */
+  admin.get(
+    '/map',
+    h(async (_req, res) => {
+      const active = await store.listOrders({
+        statuses: ['AWAITING_RIDER', 'RIDER_ASSIGNED', 'IN_TRANSIT', 'AT_AGENCY', 'AT_DESTINATION_HUB', 'LAST_MILE_ASSIGNED', 'OUT_FOR_DELIVERY', 'DISPUTED'],
+        limit: 300
+      });
+      const riderList = await store.listRiders({ status: 'APPROVED' });
+      res.json({
+        riders: riderList
+          .filter((r) => r.location)
+          .map((r) => ({ id: r.id, name: r.fullName, code: r.riderCode, onDuty: r.onDuty, location: r.location, at: r.locationUpdatedAt, plate: r.plateNumber })),
+        orders: active.map((o) => ({
+          id: o.id, trackingCode: o.trackingCode, status: o.status, itemTitle: o.itemTitle, total: o.total,
+          pickup: o.pickupLocation, dropoff: o.dropoffLocation, riderId: o.lastMileRiderId ?? o.firstMileRiderId
+        }))
+      });
     })
   );
   admin.get(

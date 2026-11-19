@@ -42,26 +42,52 @@ export interface User {
   city?: string;
   lang: Lang;
   kycStatus: KycStatus;
+  /** Seller verification documents (Telegram file ids; files stay on Telegram's servers). */
   cniNumber?: string;
-  cniPhotoFileId?: string; // Telegram file id
+  selfieFileId?: string;
+  cniFrontFileId?: string;
+  cniBackFileId?: string;
+  shopPhotoFileId?: string;
+  shopLocation?: GeoPoint;
+  kycSubmittedAt?: string;
+  kycReviewedAt?: string;
+  /** Reason shown to the seller when verification is refused. */
+  kycNote?: string;
+  /** Sign-up in progress (merchant or rider), saved after every step so nothing is lost. */
+  draft?: OnboardingDraft;
   createdAt: string;
   updatedAt: string;
 }
 
-export type RiderStatus = 'PENDING' | 'APPROVED' | 'SUSPENDED';
+export interface OnboardingDraft {
+  kind: 'merchant' | 'rider';
+  step: string;
+  data: Record<string, string | number | GeoPoint | undefined>;
+  startedAt: string;
+}
+
+export type RiderStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
 
 export interface Rider {
   id: string;
   version: number;
   userId: string;
   telegramId: number;
-  fullName: string;
+  /** Public rider number printed on the badge, e.g. BSR-7K4Q. Anyone can check it with /verify. */
+  riderCode: string;
+  fullName: string; // legal name as on the ID card
   phone: string;
   cniNumber: string;
+  selfieFileId?: string;
+  cniFrontFileId?: string;
+  cniBackFileId?: string;
+  vehiclePhotoFileId?: string;
   plateNumber: string;
   vehicleType: VehicleType;
   city?: string;
   status: RiderStatus;
+  reviewNote?: string;
+  reviewedAt?: string;
   onDuty: boolean;
   /** Collateral float held by the platform on the rider's behalf (FCFA). */
   floatBalance: number;

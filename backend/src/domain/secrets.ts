@@ -64,5 +64,8 @@ function randomChars(n: number): string {
   return s;
 }
 
+/** e.g. BSR-7KQ4: printed on a rider's badge, checkable by anyone with /verify. */
+export const newRiderCode = () => `BSR-${randomChars(4)}`;
+
 /** e.g. BS-7KQ4-M2XD (~40 bits). Public: lets anyone see coarse status only. */
 export const newTrackingCode = () => `BS-${randomChars(4)}-${randomChars(4)}`;

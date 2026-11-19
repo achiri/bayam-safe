@@ -1,0 +1,34 @@
+# Render Blueprint for a free staging deployment of BayamSafe.
+# Render dashboard → New → Blueprint → pick this repo. Values marked `sync: false`
+# are asked for during setup (see docs/DEPLOY.md for where to get each one).
+services:
+  - type: web
+    name: bayamsafe-staging
+    runtime: docker
+    plan: free
+    branch: staging
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # "development" keeps the sandbox payment simulator available; production mode refuses it.
+      - key: NODE_ENV
+        value: development
+      - key: PAYMENT_PROVIDER
+        value: simulated
+      - key: TELEGRAM_USE_WEBHOOK
+        value: "true"
+      - key: APP_SECRET
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: PUBLIC_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false

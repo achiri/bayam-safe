@@ -11,6 +11,13 @@ A seller on WhatsApp, TikTok or Facebook creates an order in a Telegram bot and 
 | Rider | Telegram bot | Apply, go on/off duty, share live location, accept jobs, confirm pickup, record agency drop-off with waybill photo, enter the buyer's code, top up the cash-on-delivery float |
 | Admin | Telegram alerts + `/api/admin` | Approve riders and verified badges, resolve disputes, review stuck payouts, check the ledger |
 
+### Pages and flows
+
+- **Landing page** (`/`, [web/index.html](web/index.html)): in French and English, with an interactive escrow simulator and a "how much do fake buyers cost you" calculator. Its buttons open the bot with `?start=merchant` or `?start=rider`.
+- **Seller sign-up** (bot, 8 steps): shop name, city, selfie, ID front and back, ID number, shop photo, exact shop GPS pin. Each answer is saved to the database straight away, so an interrupted sign-up resumes where it stopped. Sellers can sell once they submit; the 🏅 badge only appears after admin approval.
+- **Rider sign-up** (bot, 9 steps): legal name, selfie, ID front and back, ID number, vehicle type, plate, vehicle photo, city. Approved riders get a public number (e.g. `BSR-7K4Q`) that anyone can check with **`/verify`** in the bot. Buyers also see the rider's photo, plate and number on their checkout page.
+- **Admin dashboard** (`/admin`, [web/admin.html](web/admin.html)): money held in escrow, revenue, verification queue with a face-match slider (selfie over ID), orders with dispute and payout actions, live map, riders, sellers and the ledger. Documents are fetched from Telegram on demand; BayamSafe doesn't copy ID photos to its own storage. Admins can also approve or refuse from Telegram review cards.
+
 ---
 
 ## How the money moves
