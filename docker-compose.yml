@@ -1,0 +1,31 @@
+# Local stack with a real Postgres. Usage:
+#   docker compose up --build
+# Put secrets (TELEGRAM_BOT_TOKEN, CAMPAY_*, APP_SECRET, ADMIN_API_KEY) in backend/.env.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bayamsafe
+      POSTGRES_PASSWORD: bayamsafe
+      POSTGRES_DB: bayamsafe
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bayamsafe"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    env_file: backend/.env
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://bayamsafe:bayamsafe@db:5432/bayamsafe
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

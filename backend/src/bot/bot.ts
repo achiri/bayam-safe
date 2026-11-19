@@ -1,333 +1,811 @@
-import { Bot, InlineKeyboard, Keyboard, session, Context, SessionFlavor } from 'grammy';
-import { EscrowService } from '../services/escrow.service.js';
-import { UserService } from '../services/user.service.js';
-import { SupportedLanguage } from '../domain/types.js';
-import { t } from '../i18n/locales.js';
+import { Bot, BotConfig, Context, InlineKeyboard, InputFile, Keyboard, SessionFlavor, session } from 'grammy';
+import { App } from '../app.js';
+import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
+import { AppError } from '../domain/errors.js';
+import { googleMapsRoute } from '../domain/geo.js';
+import { isValidCameroonPhone } from '../domain/phone.js';
+import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../domain/types.js';
+import { DomainEvent } from '../services/events.js';
+import { esc, t } from '../i18n/locales.js';
 
-interface SessionData {
-  language: SupportedLanguage;
-  step?:
-    | 'IDLE'
-    | 'WAITING_CONTACT'
-    | 'SELLER_TITLE'
-    | 'SELLER_PRICE'
-    | 'SELLER_DELIVERY'
-    | 'SELLER_BUYER_PHONE'
-    | 'RIDER_REGISTER_CNI'
-    | 'RIDER_REGISTER_PLATE'
-    | 'RIDER_RELEASE_CODE'
-    | 'MERCHANT_UPGRADE_CNI';
-  tempOrder?: {
-    itemTitle?: string;
-    itemPrice?: number;
-    deliveryFee?: number;
-    buyerPhone?: string;
-  };
-  tempRiderReg?: {
-    cniNumber?: string;
-    plateNumber?: string;
-  };
-  riderSelectedOrderCode?: string;
+type Strings = ReturnType<typeof t>;
+
+interface Draft {
+  type: OrderType;
+  title?: string;
+  price?: number;
+  fee?: number;
+  agencyId?: string;
+  dest?: string;
+  agencyFee?: number;
+  buyer?: string;
+  pickup?: string;
+  pickupLocation?: GeoPoint;
+  mode?: PaymentMode;
 }
 
-export type BotContext = Context & SessionFlavor<SessionData>;
+type Flow =
+  | { kind: 'order'; step: 'title' | 'price' | 'fee' | 'agency' | 'dest' | 'agencyFee' | 'buyer' | 'pickup' | 'mode' | 'confirm'; d: Draft }
+  | { kind: 'kyc'; step: 'cni' | 'photo'; cni?: string }
+  | { kind: 'rider'; step: 'cni' | 'plate' | 'city'; cni?: string; plate?: string }
+  | { kind: 'waybill'; orderId: string; step: 'number' | 'photo'; number?: string }
+  | { kind: 'code'; orderId: string }
+  | { kind: 'problem'; orderId: string };
 
-export function createTelegramBot(
-  token: string,
-  escrowService: EscrowService,
-  userService?: UserService
-): Bot<BotContext> {
-  const bot = new Bot<BotContext>(token);
-  const users = userService || new UserService();
+interface SessionData {
+  lang?: Lang;
+  flow?: Flow;
+}
 
-  bot.use(
-    session({
-      initial: (): SessionData => ({
-        language: 'fr',
-        step: 'IDLE'
-      })
-    })
-  );
-
-  const getMainMenuKeyboard = (lang: SupportedLanguage, isMerchantVerified: boolean = false) => {
-    const text = t(lang);
-    return new InlineKeyboard()
-      .text(text.btn_new_intra_order, 'act_new_intra')
-      .row()
-      .text(text.btn_new_agency_order, 'act_new_agency')
-      .row()
-      .text(isMerchantVerified ? '🏅 Badge Vérifié Actif' : '🏅 Obtenir le Badge Vendeur Vérifié', 'act_upgrade_kyc')
-      .text('💳 Mon Micro-Crédit', 'act_my_credit')
-      .row()
-      .text(text.btn_rider_mode, 'act_rider_mode')
-      .text('🏆 Classement Motomen', 'act_leaderboard')
-      .row()
-      .text(text.btn_my_orders, 'act_my_orders')
-      .text(text.btn_change_lang, 'act_toggle_lang');
+export type BotContext = Context &
+  SessionFlavor<SessionData> & {
+    lang: Lang;
+    s: Strings;
+    user?: User;
   };
 
-  // 1. /start command
-  bot.command('start', async (ctx) => {
-    const lang = ctx.session.language || 'fr';
-    const text = t(lang);
-    ctx.session.step = 'IDLE';
+const parseAmount = (text: string): number | undefined => {
+  const digits = text.replace(/[\s.,]/g, '');
+  return /^\d{1,7}$/.test(digits) ? Number(digits) : undefined;
+};
 
-    // Deep-link check e.g. /start order_BS-DLA-12345
-    const payload = ctx.match;
-    if (payload && payload.startsWith('order_')) {
-      const code = payload.replace('order_', '');
-      const order = escrowService.getOrder(code);
-      if (order) {
-        await ctx.reply(
-          `🤝 *BayamSafe Expédition Sécurisée* - Code: \`${order.trackingCode}\`\n\n` +
-          `📦 Article: *${order.itemTitle}*\n` +
-          `💰 Montant Total: *${order.totalAmount.toLocaleString('fr-FR')} FCFA*\n` +
-          `📊 Statut: *${order.status}*\n\n` +
-          `👉 Pour payer ou débloquer, ouvrez le lien mobile : ${process.env.FRONTEND_URL}/checkout.html?code=${order.trackingCode}`,
-          { parse_mode: 'Markdown' }
-        );
+/** What a rider earns on a leg, mirroring settlementPlan. */
+function riderEarning(o: Order, leg: 'FIRST' | 'LAST'): number {
+  if (o.type === 'INTER_CITY') {
+    const half = Math.floor(o.deliveryFee / 2);
+    return leg === 'FIRST' ? half : o.deliveryFee - half;
+  }
+  return o.deliveryFee;
+}
+
+const destinationTerminal = (o: Order) => {
+  const origin = getAgency(o.originAgencyId ?? '');
+  return AGENCIES.find((a) => a.name === origin?.name && a.city === o.destinationCity);
+};
+
+export function createBot(app: App, token: string, botConfig?: BotConfig<BotContext>): Bot<BotContext> {
+  const bot = new Bot<BotContext>(token, botConfig);
+  const { users, riders, orders, store, config } = app;
+  const isAdmin = (id?: number) => !!id && config.ADMIN_TELEGRAM_IDS.includes(id);
+
+  bot.use(session({ initial: (): SessionData => ({}) }));
+
+  // Resolve user + language for every update.
+  bot.use(async (ctx, next) => {
+    if (ctx.from) {
+      ctx.user = await users.getByTelegram(ctx.from.id);
+      ctx.lang = ctx.user?.lang ?? ctx.session.lang ?? (ctx.from.language_code?.startsWith('en') ? 'en' : 'fr');
+    } else {
+      ctx.lang = 'fr';
+    }
+    ctx.s = t(ctx.lang);
+    await next();
+  });
+
+  const html = (ctx: BotContext, text: string, extra: Record<string, unknown> = {}) =>
+    ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...extra });
+
+  /** Runs a handler and turns domain errors into a friendly reply. */
+  const guard =
+    <C extends BotContext>(fn: (ctx: C) => Promise<unknown>) =>
+    async (ctx: C) => {
+      try {
+        await fn(ctx);
+      } catch (e) {
+        if (ctx.callbackQuery) await ctx.answerCallbackQuery().catch(() => undefined);
+        if (e instanceof AppError || (e as { code?: string })?.code === 'NOT_REGISTERED') {
+          await html(ctx, `⚠️ ${esc((e as Error).message)}`);
+        } else {
+          console.error('[bot] handler error:', e);
+          await html(ctx, ctx.s.genericError);
+        }
+      }
+    };
+
+  const requireUser = async (ctx: BotContext): Promise<User | undefined> => {
+    if (!ctx.user) {
+      await html(ctx, ctx.s.notRegistered);
+      return undefined;
+    }
+    return ctx.user;
+  };
+
+  const mainMenu = (s: Strings) =>
+    new InlineKeyboard()
+      .text(s.btnNewIntra, 'menu:new_intra').row()
+      .text(s.btnNewInter, 'menu:new_inter').row()
+      .text(s.btnMyOrders, 'menu:orders').text(s.btnKyc, 'menu:kyc').row()
+      .text(s.btnRider, 'menu:rider').text(s.btnLeaderboard, 'menu:leaderboard').row()
+      .text(s.btnLang, 'menu:lang');
+
+  const showMenu = async (ctx: BotContext) => {
+    const u = ctx.user!;
+    await html(ctx, ctx.s.menuTitle(u.shopName, u.kycStatus === 'VERIFIED'), { reply_markup: mainMenu(ctx.s) });
+  };
+
+  // ------------------------------------------------------------------ onboarding
+
+  bot.command('start', guard(async (ctx) => {
+    ctx.session.flow = undefined;
+    if (!ctx.user) {
+      const kb = new Keyboard().requestContact(ctx.s.shareContactBtn).resized().oneTime();
+      await html(ctx, ctx.s.welcomeNew, { reply_markup: kb });
+      return;
+    }
+    await showMenu(ctx);
+  }));
+
+  bot.on('message:contact', guard(async (ctx) => {
+    const c = ctx.message.contact;
+    if (c.user_id !== ctx.from.id) {
+      await html(ctx, ctx.s.shareOwnContact);
+      return;
+    }
+    const user = await users.registerFromContact(ctx.from.id, c, ctx.lang);
+    ctx.user = user;
+    await html(ctx, ctx.s.registered(user.fullName, user.phone), { reply_markup: { remove_keyboard: true } });
+    await showMenu(ctx);
+  }));
+
+  bot.command('menu', guard(async (ctx) => {
+    if (await requireUser(ctx)) await showMenu(ctx);
+  }));
+
+  bot.command('help', guard(async (ctx) => html(ctx, ctx.s.help)));
+
+  bot.command('cancel', guard(async (ctx) => {
+    ctx.session.flow = undefined;
+    await html(ctx, ctx.s.cancelled);
+  }));
+
+  const toggleLang = async (ctx: BotContext) => {
+    const next: Lang = ctx.lang === 'fr' ? 'en' : 'fr';
+    ctx.session.lang = next;
+    if (ctx.user) ctx.user = await users.updateProfile(ctx.from!.id, { lang: next });
+    ctx.lang = next;
+    ctx.s = t(next);
+    await html(ctx, ctx.s.langSet);
+  };
+  bot.command('lang', guard(toggleLang));
+
+  // ------------------------------------------------------------------ menu buttons
+
+  bot.callbackQuery('menu:lang', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await toggleLang(ctx);
+  }));
+
+  const startOrder = (type: OrderType) =>
+    guard(async (ctx: BotContext) => {
+      await ctx.answerCallbackQuery?.().catch(() => undefined);
+      if (!(await requireUser(ctx))) return;
+      ctx.session.flow = { kind: 'order', step: 'title', d: { type } };
+      await html(ctx, ctx.s.askTitle);
+    });
+  bot.callbackQuery('menu:new_intra', startOrder('INTRA_CITY'));
+  bot.callbackQuery('menu:new_inter', startOrder('INTER_CITY'));
+
+  const listOrders = async (ctx: BotContext) => {
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const list = await orders.listForMerchant(u.id, 10);
+    if (!list.length) return html(ctx, ctx.s.noOrders);
+    const kb = new InlineKeyboard();
+    list.forEach((o) => kb.text(`${o.trackingCode} · ${o.itemTitle.slice(0, 20)}`, `m:view:${o.id}`).row());
+    await html(ctx, list.map((o) => ctx.s.orderLine(o.trackingCode, o.itemTitle, ctx.s.status(o.status))).join('\n\n'), { reply_markup: kb });
+  };
+  bot.command('orders', guard(listOrders));
+  bot.callbackQuery('menu:orders', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await listOrders(ctx);
+  }));
+
+  const startKyc = async (ctx: BotContext) => {
+    const u = await requireUser(ctx);
+    if (!u) return;
+    if (u.kycStatus === 'VERIFIED' || u.kycStatus === 'PENDING') return html(ctx, ctx.s.kycAlready(u.kycStatus));
+    ctx.session.flow = { kind: 'kyc', step: 'cni' };
+    await html(ctx, ctx.s.kycIntro);
+  };
+  bot.command('kyc', guard(startKyc));
+  bot.callbackQuery('menu:kyc', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await startKyc(ctx);
+  }));
+
+  const riderMenu = async (ctx: BotContext) => {
+    const r = await riders.getByTelegram(ctx.from!.id);
+    await html(ctx, ctx.s.riderMenu(r?.status, r?.onDuty, r?.floatBalance, r?.floatReserved));
+  };
+  bot.callbackQuery('menu:rider', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await riderMenu(ctx);
+  }));
+
+  const leaderboard = async (ctx: BotContext) => {
+    const top = await riders.leaderboard(5);
+    const rows = top.map((r, i) => `${i + 1}. ${esc(r.fullName)} — ${r.completedDeliveries}`).join('\n');
+    await html(ctx, ctx.s.leaderboard(rows));
+  };
+  bot.command('leaderboard', guard(leaderboard));
+  bot.callbackQuery('menu:leaderboard', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await leaderboard(ctx);
+  }));
+
+  // ------------------------------------------------------------------ merchant order actions
+
+  const merchantOrderKeyboard = (s: Strings, o: Order) => {
+    const kb = new InlineKeyboard();
+    if (['PENDING_PAYMENT', 'AWAITING_RIDER', 'RIDER_ASSIGNED'].includes(o.status)) kb.text(s.btnCancelOrder, `m:cancel:${o.id}`).row();
+    if (o.status === 'AT_AGENCY') kb.text(s.btnArrived, `m:arrived:${o.id}`).row();
+    return kb;
+  };
+
+  bot.callbackQuery(/^m:view:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const o = await orders.getForMerchant(ctx.match[1], u.id);
+    const lines = [
+      `<b>${esc(o.trackingCode)}</b> — ${ctx.s.status(o.status)}`,
+      `📦 ${esc(o.itemTitle)}`,
+      `💰 ${ctx.s.money(o.total)} (${o.paymentMode === 'COD' ? 'cash' : 'escrow'})`,
+      o.waybillNumber ? `🧾 ${esc(o.waybillNumber)}` : '',
+      ...o.payouts.filter((p) => p.kind === 'MERCHANT').map((p) => `💸 ${ctx.s.money(p.amount)} → ${p.status}`)
+    ].filter(Boolean);
+    await html(ctx, lines.join('\n'), { reply_markup: merchantOrderKeyboard(ctx.s, o) });
+  }));
+
+  bot.callbackQuery(/^m:cancel:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const o = await orders.cancel(ctx.match[1], { merchantId: u.id });
+    await html(ctx, ctx.s.orderCancelledMsg(o.trackingCode));
+  }));
+
+  bot.callbackQuery(/^m:arrived:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const o = await orders.markArrivedAtHub(ctx.match[1], { merchantId: u.id });
+    await html(ctx, ctx.s.mStatus(o.trackingCode, ctx.s.status(o.status)));
+  }));
+
+  // ------------------------------------------------------------------ order wizard callbacks
+
+  bot.callbackQuery(/^ord:agency:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'agency') return;
+    const agency = getAgency(ctx.match[1]);
+    if (!agency) return;
+    f.d.agencyId = agency.id;
+    f.step = 'dest';
+    const kb = new InlineKeyboard();
+    AGENCIES.filter((a) => a.name === agency.name && a.city !== agency.city).forEach((a) => kb.text(a.city, `ord:dest:${a.city}`).row());
+    await html(ctx, ctx.s.askDestination, { reply_markup: kb });
+  }));
+
+  bot.callbackQuery(/^ord:dest:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'dest') return;
+    if (!CITIES.includes(ctx.match[1] as (typeof CITIES)[number])) return;
+    f.d.dest = ctx.match[1];
+    f.step = 'agencyFee';
+    await html(ctx, ctx.s.askAgencyFee);
+  }));
+
+  bot.callbackQuery(/^ord:mode:(ESCROW|COD)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'mode') return;
+    f.d.mode = ctx.match[1] as PaymentMode;
+    await showSummary(ctx, f.d);
+  }));
+
+  const showSummary = async (ctx: BotContext, d: Draft) => {
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order') return;
+    f.step = 'confirm';
+    const agency = getAgency(d.agencyId ?? '');
+    const agencyFee = d.type === 'INTER_CITY' ? d.agencyFee ?? 0 : 0;
+    await html(
+      ctx,
+      ctx.s.summary({
+        title: d.title!,
+        price: d.price!,
+        fee: d.fee!,
+        agencyFee,
+        total: d.price! + d.fee! + agencyFee,
+        buyer: d.buyer!,
+        mode: d.mode === 'COD' ? ctx.s.btnCod : ctx.s.btnEscrow,
+        route: agency ? `${agency.name} ${agency.city} (${agency.terminalName}) → ${d.dest}` : undefined
+      }),
+      { reply_markup: new InlineKeyboard().text(ctx.s.btnConfirm, 'ord:confirm').text(ctx.s.btnAbort, 'ord:abort') }
+    );
+  };
+
+  bot.callbackQuery('ord:abort', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    ctx.session.flow = undefined;
+    await html(ctx, ctx.s.cancelled);
+  }));
+
+  bot.callbackQuery('ord:confirm', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    const u = await requireUser(ctx);
+    if (!u || f?.kind !== 'order' || f.step !== 'confirm') return;
+    const d = f.d;
+    const { order, checkoutUrl } = await orders.createOrder(u, {
+      type: d.type,
+      paymentMode: d.mode ?? 'ESCROW',
+      itemTitle: d.title!,
+      itemPrice: d.price!,
+      deliveryFee: d.fee!,
+      agencyFee: d.agencyFee,
+      buyerPhone: d.buyer!,
+      pickupAddress: d.pickup!,
+      pickupLocation: d.pickupLocation,
+      originAgencyId: d.agencyId,
+      destinationCity: d.dest
+    });
+    ctx.session.flow = undefined;
+    const pitch = ctx.s.whatsappPitch(order.itemTitle, order.total, checkoutUrl);
+    await html(ctx, ctx.s.orderCreated(order.trackingCode, checkoutUrl, order.paymentMode === 'COD'), {
+      reply_markup: new InlineKeyboard().url(ctx.s.btnShareWhatsapp, `https://wa.me/?text=${encodeURIComponent(pitch)}`)
+    });
+  }));
+
+  // ------------------------------------------------------------------ rider commands
+
+  bot.command('register_rider', guard(async (ctx) => {
+    if (!(await requireUser(ctx))) return;
+    if (await riders.getByTelegram(ctx.from!.id)) return riderMenu(ctx);
+    ctx.session.flow = { kind: 'rider', step: 'cni' };
+    await html(ctx, ctx.s.riderAskCni);
+  }));
+
+  bot.command('on_duty', guard(async (ctx) => {
+    await riders.setDuty(ctx.from!.id, true);
+    await html(ctx, ctx.s.onDuty);
+  }));
+
+  bot.command('off_duty', guard(async (ctx) => {
+    await riders.setDuty(ctx.from!.id, false);
+    await html(ctx, ctx.s.offDuty);
+  }));
+
+  bot.command('float', guard(async (ctx) => {
+    const r = await riders.requireApproved(ctx.from!.id);
+    await html(ctx, ctx.s.floatInfo(r.floatBalance, r.floatReserved));
+  }));
+
+  bot.command('topup', guard(async (ctx) => {
+    const amount = parseAmount(String(ctx.match ?? ''));
+    if (!amount) return html(ctx, ctx.s.invalidNumber);
+    const { topup, ussdCode } = await riders.requestTopup(ctx.from!.id, amount);
+    await html(ctx, ctx.s.topupSent(topup.amount, ussdCode));
+  }));
+
+  bot.command('jobs', guard(async (ctx) => {
+    const r = await riders.requireApproved(ctx.from!.id);
+    const active = (await orders.listForRider(r.id, 20)).filter((o) =>
+      ['RIDER_ASSIGNED', 'IN_TRANSIT', 'LAST_MILE_ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status)
+    );
+    if (!active.length) return html(ctx, ctx.s.noJobs);
+    for (const o of active) await sendJobCard(ctx.from!.id, o, r, ctx.lang);
+  }));
+
+  // Live location updates arrive as edited messages.
+  const onLocation = async (ctx: BotContext, loc?: { latitude: number; longitude: number }) => {
+    if (!loc || !ctx.from) return;
+    const f = ctx.session.flow;
+    if (f?.kind === 'order' && f.step === 'pickup') {
+      f.d.pickupLocation = { lat: loc.latitude, lng: loc.longitude };
+      await html(ctx, ctx.s.pickupLocationSaved);
+      return;
+    }
+    await riders.updateLocation(ctx.from.id, { lat: loc.latitude, lng: loc.longitude }).catch(() => undefined);
+  };
+  bot.on('message:location', guard((ctx) => onLocation(ctx, ctx.message.location)));
+  bot.on('edited_message:location', async (ctx) => {
+    await onLocation(ctx, ctx.editedMessage.location).catch(() => undefined);
+  });
+
+  // ------------------------------------------------------------------ rider job actions
+
+  const jobKeyboard = (s: Strings, o: Order, rider: Rider) => {
+    const kb = new InlineKeyboard();
+    const first = o.firstMileRiderId === rider.id;
+    const last = o.lastMileRiderId === rider.id;
+    const dropoffRoute = o.dropoffLocation ? googleMapsRoute(o.dropoffLocation) : undefined;
+    if (o.status === 'RIDER_ASSIGNED' && first) {
+      kb.text(s.btnPickedUp, `r:pickup:${o.id}`).text(s.btnRelease, `r:release:${o.id}`).row();
+      if (o.pickupLocation) kb.url(s.btnMapsPickup, googleMapsRoute(o.pickupLocation)).row();
+    } else if (o.status === 'IN_TRANSIT' && first) {
+      if (o.type === 'INTER_CITY') {
+        kb.text(s.btnAgencyDrop, `r:agency:${o.id}`).row();
+        const ag = getAgency(o.originAgencyId ?? '');
+        if (ag) kb.url(s.btnMapsPickup, googleMapsRoute(ag.location)).row();
+      } else {
+        kb.text(s.btnDeliver, `r:deliver:${o.id}`).row();
+        if (dropoffRoute) kb.url(s.btnMapsDropoff, dropoffRoute).row();
+      }
+      kb.text(s.btnProblem, `r:problem:${o.id}`);
+    } else if (o.status === 'LAST_MILE_ASSIGNED' && last) {
+      kb.text(s.btnPickedUp, `r:pickup:${o.id}`).text(s.btnRelease, `r:release:${o.id}`).row();
+      const term = destinationTerminal(o);
+      if (term) kb.url(s.btnMapsPickup, googleMapsRoute(term.location)).row();
+    } else if (o.status === 'OUT_FOR_DELIVERY' && last) {
+      kb.text(s.btnDeliver, `r:deliver:${o.id}`).row();
+      if (dropoffRoute) kb.url(s.btnMapsDropoff, dropoffRoute).row();
+      kb.text(s.btnProblem, `r:problem:${o.id}`);
+    }
+    return kb;
+  };
+
+  async function sendJobCard(chatId: number, o: Order, rider: Rider, lang: Lang) {
+    const s = t(lang);
+    const delivering = o.type === 'INTER_CITY' ? o.lastMileRiderId === rider.id : o.firstMileRiderId === rider.id;
+    const deliveryPhase = o.type === 'INTER_CITY' ? ['LAST_MILE_ASSIGNED', 'OUT_FOR_DELIVERY'].includes(o.status) : ['RIDER_ASSIGNED', 'IN_TRANSIT'].includes(o.status);
+    const showBuyer = delivering && deliveryPhase;
+    const agency = getAgency(o.originAgencyId ?? '');
+    const term = destinationTerminal(o);
+    const pickup = o.lastMileRiderId === rider.id && term ? `${term.name} ${term.city} (${term.terminalName})` : o.pickupAddress;
+    await bot.api.sendMessage(
+      chatId,
+      s.jobCard({
+        code: o.trackingCode,
+        status: s.status(o.status),
+        item: o.itemTitle,
+        pickup,
+        merchant: o.merchantName,
+        merchantPhone: o.merchantPhone,
+        buyerPhone: showBuyer ? o.buyerPhone : undefined,
+        dropoff: showBuyer ? o.dropoffAddress : undefined,
+        landmark: showBuyer ? o.landmark : undefined,
+        collect: showBuyer && o.paymentMode === 'COD' ? o.total : undefined,
+        agency: agency ? `${agency.name} (${agency.terminalName})` : undefined,
+        dest: o.destinationCity,
+        waybill: o.waybillNumber
+      }),
+      { parse_mode: 'HTML', reply_markup: jobKeyboard(s, o, rider), link_preview_options: { is_disabled: true } }
+    );
+    if (showBuyer && o.voiceNoteId && ['RIDER_ASSIGNED', 'LAST_MILE_ASSIGNED'].includes(o.status)) {
+      const media = await orders.getVoiceNote(o);
+      if (media) {
+        const ext = media.mime.includes('ogg') ? 'ogg' : media.mime.includes('mp4') ? 'm4a' : 'webm';
+        await bot.api.sendDocument(chatId, new InputFile(media.data, `directions-${o.trackingCode}.${ext}`), { caption: s.voiceNoteCaption });
+      }
+    }
+  }
+
+  const riderAction =
+    (fn: (ctx: BotContext, orderId: string) => Promise<void>) =>
+    guard(async (ctx: BotContext) => {
+      await ctx.answerCallbackQuery();
+      const id = Array.isArray(ctx.match) ? ctx.match[1] : undefined;
+      if (id) await fn(ctx, id);
+    });
+
+  bot.callbackQuery(/^r:claim:(.+)$/, guard(async (ctx) => {
+    try {
+      const o = await orders.claim(ctx.from.id, ctx.match[1]);
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageReplyMarkup().catch(() => undefined);
+      const r = await riders.requireApproved(ctx.from.id);
+      await sendJobCard(ctx.from.id, o, r, ctx.lang);
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'CONFLICT') {
+        await ctx.answerCallbackQuery({ text: ctx.s.jobTaken, show_alert: true });
+        await ctx.editMessageReplyMarkup().catch(() => undefined);
         return;
       }
+      throw e;
     }
+  }));
 
-    // Check if user is registered; if not, prompt 1-tap contact sharing
-    const existingUser = users.getUser(String(ctx.from?.id));
-    if (!existingUser) {
-      ctx.session.step = 'WAITING_CONTACT';
-      const contactKeyboard = new Keyboard()
-        .requestContact('📱 Inscription Rapide (Partager mon Numéro MoMo)')
-        .resized()
-        .oneTime();
+  bot.callbackQuery(/^r:release:(.+)$/, riderAction(async (ctx, id) => {
+    const o = await orders.unassign(ctx.from!.id, id);
+    await html(ctx, ctx.s.mStatus(o.trackingCode, ctx.s.status(o.status)));
+  }));
 
-      await ctx.reply(
-        `👋 *Bienvenue sur BayamSafe Cameroun 🇨🇲*\n\n` +
-        `Pour créer des liens sécurisés MoMo / Orange Money et recevoir vos paiements sans intermédiaire, ` +
-        `appuyez sur le bouton ci-dessous pour lier votre numéro en 1 seconde :`,
-        { parse_mode: 'Markdown', reply_markup: contactKeyboard }
-      );
-      return;
+  bot.callbackQuery(/^r:pickup:(.+)$/, riderAction(async (ctx, id) => {
+    const o = await orders.confirmPickup(ctx.from!.id, id);
+    const r = await riders.requireApproved(ctx.from!.id);
+    await sendJobCard(ctx.from!.id, o, r, ctx.lang);
+  }));
+
+  bot.callbackQuery(/^r:agency:(.+)$/, riderAction(async (ctx, id) => {
+    ctx.session.flow = { kind: 'waybill', orderId: id, step: 'number' };
+    await html(ctx, ctx.s.askWaybillNumber);
+  }));
+
+  bot.callbackQuery(/^r:deliver:(.+)$/, riderAction(async (ctx, id) => {
+    ctx.session.flow = { kind: 'code', orderId: id };
+    await html(ctx, ctx.s.askCode);
+  }));
+
+  bot.callbackQuery(/^r:problem:(.+)$/, riderAction(async (ctx, id) => {
+    ctx.session.flow = { kind: 'problem', orderId: id };
+    await html(ctx, ctx.s.askProblem);
+  }));
+
+  // ------------------------------------------------------------------ admin buttons
+
+  bot.callbackQuery(/^adm:rider:(.+):(a|s)$/, guard(async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Admins only', show_alert: true });
+    const r = await riders.decide(ctx.match[1], ctx.match[2] === 'a' ? 'APPROVED' : 'SUSPENDED');
+    await ctx.answerCallbackQuery({ text: `${r.fullName}: ${r.status}` });
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+  }));
+
+  bot.callbackQuery(/^adm:kyc:(.+):(a|r)$/, guard(async (ctx) => {
+    if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Admins only', show_alert: true });
+    const u = await users.decideKyc(ctx.match[1], ctx.match[2] === 'a');
+    await ctx.answerCallbackQuery({ text: `${u.shopName}: ${u.kycStatus}` });
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+  }));
+
+  // ------------------------------------------------------------------ photos (KYC, waybill)
+
+  bot.on('message:photo', guard(async (ctx) => {
+    const f = ctx.session.flow;
+    const fileId = ctx.message.photo.at(-1)!.file_id;
+    if (f?.kind === 'kyc' && f.step === 'photo' && f.cni) {
+      await users.submitKyc(ctx.from.id, f.cni, fileId);
+      ctx.session.flow = undefined;
+      await html(ctx, ctx.s.kycSubmitted);
+    } else if (f?.kind === 'waybill' && f.step === 'photo' && f.number) {
+      const o = await orders.recordAgencyDropoff(ctx.from.id, f.orderId, f.number, fileId);
+      ctx.session.flow = undefined;
+      await html(ctx, ctx.s.mStatus(o.trackingCode, ctx.s.status(o.status)));
     }
+  }));
 
-    await ctx.reply(
-      `*${text.welcome_title}*\n\n` +
-      `Bonjour *${existingUser.fullName}* ${existingUser.isVerifiedMerchant ? '🏅 (Vendeur Vérifié)' : ''} !\n\n` +
-      `${text.welcome_body}`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: getMainMenuKeyboard(lang, existingUser.isVerifiedMerchant)
-      }
-    );
-  });
+  // ------------------------------------------------------------------ free-text steps
 
-  // 2. 1-Tap Native Phone Contact Registration Handler
-  bot.on('message:contact', async (ctx) => {
-    const contact = ctx.message.contact;
-    const phone = contact.phone_number;
-    const name = `${contact.first_name || ''} ${contact.last_name || ''}`.trim() || 'Commerçant BayamSafe';
-
-    const user = users.registerUserFromContact(
-      ctx.from.id,
-      phone,
-      name,
-      'MERCHANT',
-      name,
-      'Douala'
-    );
-
-    ctx.session.step = 'IDLE';
-
-    await ctx.reply(
-      `🎉 *Compte Créé avec Succès !*\n\n` +
-      `👤 Nom: *${user.fullName}*\n` +
-      `📱 Numéro MoMo lié: \`${user.phoneNumber}\`\n` +
-      `🛡️ Niveau KYC: *Niveau 1 (Actif)*\n\n` +
-      `Vous pouvez dès maintenant générer des liens séquestres pour vos ventes TikTok, WhatsApp et Instagram !`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: { remove_keyboard: true }
-      }
-    );
-
-    await ctx.reply(
-      `Que souhaitez-vous faire ?`,
-      { reply_markup: getMainMenuKeyboard(ctx.session.language, user.isVerifiedMerchant) }
-    );
-  });
-
-  // 3. Level 2 CNI Verification (Verified Badge 🏅)
-  bot.callbackQuery('act_upgrade_kyc', async (ctx) => {
-    ctx.session.step = 'MERCHANT_UPGRADE_CNI';
-    await ctx.answerCallbackQuery();
-    await ctx.reply(
-      `🏅 *Obtenir le Badge Vendeur Vérifié BayamSafe*\n\n` +
-      `Le badge vert s'affiche sur tous vos liens de paiement et multiplie vos ventes par 3.\n\n` +
-      `📝 Veuillez entrer votre *Numéro de CNI* (ou Passeport) :`
-    );
-  });
-
-  // 4. Working Capital Inventory Nano-Credit Calculator
-  bot.callbackQuery('act_my_credit', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const user = users.getUser(String(ctx.from.id));
-    const processed = user?.totalVolumeProcessed || 50000;
-    const creditUnlocked = user?.unlockedCreditLimit || Math.round(processed * 0.3);
-
-    await ctx.reply(
-      `💳 *Votre Capacité de Micro-Crédit Stock BayamSafe*\n\n` +
-      `📈 Volume total d'expéditions sécurisées: *${processed.toLocaleString('fr-FR')} FCFA*\n` +
-      `💰 Avance de Trésorerie Débloquée: *${creditUnlocked.toLocaleString('fr-FR')} FCFA*\n\n` +
-      `ℹ️ *Comment ça marche ?*\n` +
-      `BayamSafe s'associe avec des institutions de microfinance pour financer vos réapprovisionnements de stock en fonction de vos ventes réelles. ` +
-      `Remboursement automatique déduit en douceur de vos prochains paiements reçus.`,
-      { parse_mode: 'Markdown' }
-    );
-  });
-
-  // 5. Rider Leaderboard
-  bot.callbackQuery('act_leaderboard', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const leaderboard = users.getRiderLeaderboard();
-    const rows = leaderboard
-      .map((r, i) => `${i + 1}. 🏍️ *${r.fullName}* - ⭐ ${r.trustScore} (${r.completedDeliveries} courses)`)
-      .join('\n');
-
-    await ctx.reply(
-      `🏆 *Top 5 des Meilleurs Livreurs Moto (Cameroun)*\n\n` +
-      `${rows}\n\n` +
-      `🎁 *Prime de la semaine* : Les 5 premiers reçoivent un bonus de 10,000 FCFA sur leur compte MoMo chaque dimanche soir !`,
-      { parse_mode: 'Markdown' }
-    );
-  });
-
-  // 6. Start Intra-City Order
-  bot.callbackQuery('act_new_intra', async (ctx) => {
-    ctx.session.step = 'SELLER_TITLE';
-    ctx.session.tempOrder = {};
-    await ctx.answerCallbackQuery();
-    await ctx.reply('📝 Quel est le nom de l\'article à livrer en ville (Moto Direct) ?');
-  });
-
-  // 7. Start Inter-City Agency Order
-  bot.callbackQuery('act_new_agency', async (ctx) => {
-    ctx.session.step = 'SELLER_TITLE';
-    ctx.session.tempOrder = {};
-    await ctx.answerCallbackQuery();
-    await ctx.reply('🚌 Quel est le nom de l\'article à expédier par Agence de Voyage (Bus) ?');
-  });
-
-  // 8. Rider Mode
-  bot.callbackQuery('act_rider_mode', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply(
-      `🏍️ *Portail Livreur Moto BayamSafe*\n\n` +
-      `• Envoyez \`/on_duty\` pour vous mettre en service et recevoir des courses.\n` +
-      `• Envoyez \`/off_duty\` pour vous mettre en pause.\n` +
-      `• Envoyez \`/register_rider\` pour vous inscrire comme livreur agréé.\n` +
-      `• Partagez votre position en direct (📎 -> Lieu -> Position en direct) pour que le système vous assigne les courses les plus proches.`
-    );
-  });
-
-  // Rider on_duty / off_duty commands
-  bot.command('on_duty', async (ctx) => {
-    await ctx.reply('🟢 *VOUS ÊTES EN SERVICE !* Vous recevrez automatiquement les alertes de courses à proximité de votre position.', { parse_mode: 'Markdown' });
-  });
-
-  bot.command('off_duty', async (ctx) => {
-    await ctx.reply('🔴 *VOUS ÊTES HORS SERVICE.* Aucune nouvelle course ne vous sera envoyée.', { parse_mode: 'Markdown' });
-  });
-
-  // Text message conversational router
-  bot.on('message:text', async (ctx) => {
+  bot.on('message:text', guard(async (ctx) => {
     const text = ctx.message.text.trim();
-    const step = ctx.session.step;
+    const f = ctx.session.flow;
+    const s = ctx.s;
+    if (!f || text.startsWith('/')) return;
 
-    // Level 2 CNI Verification Input
-    if (step === 'MERCHANT_UPGRADE_CNI') {
-      const user = users.getUser(String(ctx.from.id));
-      if (user) {
-        users.upgradeMerchantToVerified(user.phoneNumber, text);
-        ctx.session.step = 'IDLE';
-        await ctx.reply(
-          `🎉 *Félicitations ! Votre Badge "Vendeur Vérifié" 🏅 est Actif !*\n\n` +
-          `CNI Enregistrée: \`${text}\`\n` +
-          `Désormais, un écusson de confiance officiel sera visible par tous vos clients sur vos pages de paiement.`,
-          { parse_mode: 'Markdown' }
-        );
-      }
-      return;
-    }
-
-    // Step 1: Item Name
-    if (step === 'SELLER_TITLE') {
-      ctx.session.tempOrder = { itemTitle: text };
-      ctx.session.step = 'SELLER_PRICE';
-      await ctx.reply('💰 Quel est le prix de l\'article (en FCFA) ? Ex: 15000');
-      return;
-    }
-
-    // Step 2: Price
-    if (step === 'SELLER_PRICE') {
-      const price = parseInt(text.replace(/[^0-9]/g, ''), 10) || 5000;
-      ctx.session.tempOrder!.itemPrice = price;
-      ctx.session.step = 'SELLER_DELIVERY';
-      await ctx.reply('🛵 Frais de livraison moto (en FCFA) ? (Mettez 0 si offert) Ex: 1500');
-      return;
-    }
-
-    // Step 3: Delivery Fee
-    if (step === 'SELLER_DELIVERY') {
-      const fee = parseInt(text.replace(/[^0-9]/g, ''), 10) || 0;
-      ctx.session.tempOrder!.deliveryFee = fee;
-      ctx.session.step = 'SELLER_BUYER_PHONE';
-      await ctx.reply('📱 Numéro WhatsApp du client (ex: 671234567) :');
-      return;
-    }
-
-    // Step 4: Buyer Phone -> Create Unified Order + Generate WhatsApp Flash Card!
-    if (step === 'SELLER_BUYER_PHONE') {
-      const temp = ctx.session.tempOrder!;
-      const user = users.getUser(String(ctx.from.id));
-
-      const order = await escrowService.createUnifiedOrder({
-        orderType: 'INTRA_CITY',
-        merchantName: user?.shopName || ctx.from.first_name || 'Vendeur Agréé',
-        merchantPhone: user?.phoneNumber || '+237671112233',
-        isMerchantVerified: user?.isVerifiedMerchant || false,
-        recipientPhone: text,
-        itemTitle: temp.itemTitle || 'Article',
-        itemPrice: temp.itemPrice || 10000,
-        deliveryFee: temp.deliveryFee || 1500,
-        paymentMode: 'DIGITAL_ESCROW',
-        pickupAddress: 'Douala Marché Akwa',
-        dropoffAddress: 'Douala Bonamoussadi'
-      });
-
-      ctx.session.step = 'IDLE';
-
-      const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:4000'}/checkout.html?code=${order.trackingCode}`;
-      const whatsappPitch =
-        `*Bonjour !* Pour votre sécurité et la mienne, voici le lien de paiement sécurisé BayamSafe 🇨🇲 :\n\n` +
-        `📦 *Article* : ${order.itemTitle}\n` +
-        `💰 *Montant* : ${order.totalAmount.toLocaleString('fr-FR')} FCFA (Séquestre MoMo / OM)\n` +
-        `🛡️ Votre argent reste bloqué chez BayamSafe jusqu'à ce que vous vérifiez le colis devant le livreur.\n\n` +
-        `👉 Cliquez ici pour valider : ${checkoutUrl}`;
-
-      await ctx.reply(
-        `✅ *Lien Séquestre & Expédition Créé !*\n\n` +
-        `📦 Code de Suivi: \`${order.trackingCode}\`\n` +
-        `💰 Total Sécurisé: *${order.totalAmount.toLocaleString('fr-FR')} FCFA*\n` +
-        `🛡️ Badge Vendeur: ${order.isMerchantVerified ? '🏅 Vendeur Vérifié' : 'Standard'}\n\n` +
-        `🔗 *Lien Web Client :*\n${checkoutUrl}\n\n` +
-        `📋 *Texte prêt à copier pour votre client sur WhatsApp :*\n\n` +
-        `${whatsappPitch}`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: new InlineKeyboard()
-            .url('💳 Tester le Lien', checkoutUrl)
-            .url('📲 Partager sur WhatsApp', `https://api.whatsapp.com/send?text=${encodeURIComponent(whatsappPitch)}`)
+    switch (f.kind) {
+      case 'order': {
+        const d = f.d;
+        if (f.step === 'title') {
+          if (text.length < 2 || text.length > 120) return html(ctx, s.askTitle);
+          d.title = text;
+          f.step = 'price';
+          return html(ctx, s.askPrice);
         }
-      );
-      return;
+        if (f.step === 'price') {
+          const n = parseAmount(text);
+          if (!n || n < 100) return html(ctx, s.invalidNumber);
+          d.price = n;
+          f.step = 'fee';
+          return html(ctx, s.askDeliveryFee);
+        }
+        if (f.step === 'fee') {
+          const n = parseAmount(text);
+          if (n === undefined) return html(ctx, s.invalidNumber);
+          d.fee = n;
+          if (d.type === 'INTER_CITY') {
+            f.step = 'agency';
+            const kb = new InlineKeyboard();
+            AGENCIES.forEach((a) => kb.text(`${a.name} · ${a.city} (${a.terminalName})`, `ord:agency:${a.id}`).row());
+            return html(ctx, s.askAgency, { reply_markup: kb });
+          }
+          f.step = 'buyer';
+          return html(ctx, s.askBuyerPhone);
+        }
+        if (f.step === 'agencyFee') {
+          const n = parseAmount(text);
+          if (n === undefined) return html(ctx, s.invalidNumber);
+          d.agencyFee = n;
+          f.step = 'buyer';
+          return html(ctx, s.askBuyerPhone);
+        }
+        if (f.step === 'buyer') {
+          if (!isValidCameroonPhone(text)) return html(ctx, s.askBuyerPhone);
+          d.buyer = text;
+          f.step = 'pickup';
+          return html(ctx, s.askPickup);
+        }
+        if (f.step === 'pickup') {
+          d.pickup = text;
+          if (d.type === 'INTRA_CITY') {
+            f.step = 'mode';
+            return html(ctx, s.askPaymentMode, {
+              reply_markup: new InlineKeyboard().text(s.btnEscrow, 'ord:mode:ESCROW').row().text(s.btnCod, 'ord:mode:COD')
+            });
+          }
+          d.mode = 'ESCROW';
+          return showSummary(ctx, d);
+        }
+        return;
+      }
+      case 'kyc': {
+        if (f.step === 'cni') {
+          f.cni = text;
+          f.step = 'photo';
+          return html(ctx, s.kycAskPhoto);
+        }
+        return html(ctx, s.kycAskPhoto);
+      }
+      case 'rider': {
+        if (f.step === 'cni') {
+          f.cni = text;
+          f.step = 'plate';
+          return html(ctx, s.riderAskPlate);
+        }
+        if (f.step === 'plate') {
+          f.plate = text;
+          f.step = 'city';
+          const kb = new Keyboard();
+          CITIES.forEach((c) => kb.text(c).row());
+          return html(ctx, s.riderAskCity, { reply_markup: kb.resized().oneTime() });
+        }
+        await riders.apply(ctx.from.id, { cniNumber: f.cni!, plateNumber: f.plate!, vehicleType: 'MOTO', city: text.slice(0, 40) });
+        ctx.session.flow = undefined;
+        return html(ctx, s.riderApplied, { reply_markup: { remove_keyboard: true } });
+      }
+      case 'waybill': {
+        if (f.step === 'number') {
+          f.number = text;
+          f.step = 'photo';
+          return html(ctx, s.askWaybillPhoto);
+        }
+        return html(ctx, s.askWaybillPhoto);
+      }
+      case 'code': {
+        const res = await orders.deliver(ctx.from.id, f.orderId, text);
+        if (res.ok) {
+          ctx.session.flow = undefined;
+          return html(ctx, s.delivered);
+        }
+        if (res.order.status === 'DISPUTED') {
+          ctx.session.flow = undefined;
+          return html(ctx, s.codeLocked);
+        }
+        return html(ctx, s.codeWrong(res.attemptsLeft));
+      }
+      case 'problem': {
+        await orders.riderOpenDispute(ctx.from.id, f.orderId, text);
+        ctx.session.flow = undefined;
+        return html(ctx, s.problemSent);
+      }
+    }
+  }));
+
+  bot.catch((err) => console.error('[bot] unhandled error:', err.error));
+
+  // ------------------------------------------------------------------ notifications
+
+  const send = async (chatId: number | undefined, text: string, extra: Record<string, unknown> = {}) => {
+    if (!chatId) return;
+    try {
+      await bot.api.sendMessage(chatId, text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...extra });
+    } catch (e) {
+      console.warn(`[bot] could not message ${chatId}:`, (e as Error).message);
+    }
+  };
+  const toAdmins = (text: string, extra: Record<string, unknown> = {}) =>
+    Promise.all(config.ADMIN_TELEGRAM_IDS.map((id) => send(id, text, extra)));
+  const merchantOf = async (o: Order) => store.getUser(o.merchantId);
+
+  app.events.on(async (e: DomainEvent) => {
+    switch (e.type) {
+      case 'order.paid': {
+        const m = await merchantOf(e.order);
+        if (m) await send(m.telegramId, t(m.lang).mPaid(e.order.trackingCode, e.order.itemTitle, e.order.total));
+        return;
+      }
+      case 'order.offer': {
+        for (const { rider, distanceKm } of e.offers) {
+          const u = await store.getUser(rider.userId);
+          const s = t(u?.lang ?? 'fr');
+          const term = destinationTerminal(e.order);
+          await send(
+            rider.telegramId,
+            s.offer({
+              item: e.order.itemTitle,
+              pickup: e.leg === 'LAST' && term ? `${term.name} (${term.terminalName})` : e.order.pickupAddress,
+              earn: riderEarning(e.order, e.leg),
+              dist: distanceKm,
+              cod: e.order.paymentMode === 'COD' ? e.order.itemPrice : undefined,
+              leg: e.leg,
+              city: e.order.destinationCity
+            }),
+            { reply_markup: new InlineKeyboard().text(s.btnAccept, `r:claim:${e.order.id}`) }
+          );
+        }
+        return;
+      }
+      case 'order.no_riders': {
+        const m = await merchantOf(e.order);
+        if (m) await send(m.telegramId, t(m.lang).mNoRiders(e.order.trackingCode));
+        await toAdmins(`🚨 No rider for <code>${esc(e.order.trackingCode)}</code> (${e.leg} leg)`);
+        return;
+      }
+      case 'order.status': {
+        const m = await merchantOf(e.order);
+        if (!m) return;
+        const s = t(m.lang);
+        const o = e.order;
+        if (o.status === 'RIDER_ASSIGNED' || o.status === 'LAST_MILE_ASSIGNED') {
+          const r = await store.getRider((o.status === 'RIDER_ASSIGNED' ? o.firstMileRiderId : o.lastMileRiderId) ?? '');
+          if (r) await send(m.telegramId, s.mRider(o.trackingCode, `${r.fullName} · ${r.plateNumber}`, r.phone));
+          return;
+        }
+        if (o.status === 'SETTLED') {
+          const p = o.payouts.find((x) => x.kind === 'MERCHANT');
+          if (p) await send(m.telegramId, s.mSettled(o.trackingCode, p.amount));
+          return;
+        }
+        await send(m.telegramId, s.mStatus(o.trackingCode, s.status(o.status)), { reply_markup: merchantOrderKeyboard(s, o) });
+        return;
+      }
+      case 'order.disputed': {
+        const o = e.order;
+        const reason = o.dispute?.reason ?? '';
+        const m = await merchantOf(o);
+        if (m) await send(m.telegramId, t(m.lang).mDisputed(o.trackingCode, reason));
+        await toAdmins(`⚠️ Dispute on <code>${esc(o.trackingCode)}</code> by ${esc(o.dispute?.openedBy)}: ${esc(reason)}\nOrder id: <code>${o.id}</code>`);
+        return;
+      }
+      case 'order.payment_mismatch':
+        await toAdmins(
+          `💸 Unmatched payment of ${e.paidAmount} FCFA on <code>${esc(e.order.trackingCode)}</code> (status ${e.order.status}, expected ${e.order.total}). Refund manually.`
+        );
+        return;
+      case 'payout.attention':
+        await toAdmins(
+          `🧾 Payout needs review on <code>${esc(e.order.trackingCode)}</code>: ${e.payout.kind} ${e.payout.amount} FCFA → ${esc(e.payout.phone)}\n${esc(e.payout.lastError)}\n` +
+            `Order <code>${e.order.id}</code> · payout <code>${e.payout.id}</code>`
+        );
+        return;
+      case 'kyc.submitted': {
+        const u = e.user;
+        const kb = new InlineKeyboard().text('✅ Approve', `adm:kyc:${u.id}:a`).text('❌ Reject', `adm:kyc:${u.id}:r`);
+        for (const id of config.ADMIN_TELEGRAM_IDS) {
+          try {
+            await bot.api.sendPhoto(id, u.cniPhotoFileId!, {
+              caption: `KYC: ${u.shopName} · ${u.phone} · CNI ${u.cniNumber}`,
+              reply_markup: kb
+            });
+          } catch (err) {
+            console.warn('[bot] KYC forward failed:', (err as Error).message);
+          }
+        }
+        return;
+      }
+      case 'kyc.decided':
+        await send(e.user.telegramId, e.user.kycStatus === 'VERIFIED' ? t(e.user.lang).kycApproved : t(e.user.lang).kycRejected);
+        return;
+      case 'rider.applied': {
+        const r = e.rider;
+        await toAdmins(`🛵 Rider application: <b>${esc(r.fullName)}</b> · ${esc(r.phone)} · CNI ${esc(r.cniNumber)} · ${esc(r.plateNumber)} · ${esc(r.city)}`, {
+          reply_markup: new InlineKeyboard().text('✅ Approve', `adm:rider:${r.id}:a`).text('⛔ Reject', `adm:rider:${r.id}:s`)
+        });
+        return;
+      }
+      case 'rider.decided': {
+        const u = await store.getUser(e.rider.userId);
+        const s = t(u?.lang ?? 'fr');
+        await send(e.rider.telegramId, e.rider.status === 'APPROVED' ? s.riderApproved : s.riderSuspended);
+        return;
+      }
+      case 'topup.confirmed': {
+        const u = await store.getUser(e.rider.userId);
+        await send(e.rider.telegramId, t(u?.lang ?? 'fr').topupConfirmed(e.topup.amount, e.rider.floatBalance));
+        return;
+      }
     }
   });
 

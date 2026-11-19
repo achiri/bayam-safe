@@ -1,68 +1,77 @@
-export type UserRole = 'MERCHANT' | 'BUYER' | 'RIDER' | 'ADMIN';
-export type SupportedLanguage = 'fr' | 'en';
+/**
+ * Core domain model. All money is integer FCFA (XAF has no minor unit).
+ * All timestamps are ISO-8601 strings so objects round-trip through JSON/JSONB unchanged.
+ */
 
-export type OrderType = 'INTRA_CITY' | 'INTER_CITY_AGENCY';
-export type PaymentMode = 'DIGITAL_ESCROW' | 'CASH_ON_DELIVERY';
-export type PaymentNetwork = 'MTN_MOMO' | 'ORANGE_MONEY';
+export type Lang = 'fr' | 'en';
+export type OrderType = 'INTRA_CITY' | 'INTER_CITY';
+export type PaymentMode = 'ESCROW' | 'COD';
+export type Operator = 'MTN' | 'ORANGE';
+export type VehicleType = 'MOTO' | 'CAR' | 'VAN';
 
-export type EscrowOrderStatus =
-  | 'DRAFT'
-  | 'SEARCHING_RIDER'
-  | 'ASSIGNED'
-  | 'AT_PICKUP'
-  | 'IN_TRANSIT'
-  | 'AGENCY_DROPPED'
-  | 'DESTINATION_HUB'
-  | 'LAST_MILE_ASSIGNED'
-  | 'LAST_MILE_TRANSIT'
-  | 'DELIVERED'
-  | 'SETTLED'
-  | 'DISPUTED'
+export type OrderStatus =
+  | 'PENDING_PAYMENT' // escrow order created, buyer has not paid yet
+  | 'AWAITING_RIDER' // paid (or COD) and waiting for a first-mile rider
+  | 'RIDER_ASSIGNED' // rider accepted, heading to merchant
+  | 'IN_TRANSIT' // parcel picked up from merchant
+  | 'AT_AGENCY' // inter-city: dropped at bus agency, waybill recorded
+  | 'AT_DESTINATION_HUB' // inter-city: bus arrived in destination city
+  | 'LAST_MILE_ASSIGNED' // inter-city: destination rider accepted
+  | 'OUT_FOR_DELIVERY' // inter-city: destination rider collected parcel from agency
+  | 'DELIVERED' // buyer gave the release code; payouts in progress
+  | 'SETTLED' // all payouts sent
+  | 'DISPUTED' // funds frozen pending admin decision
+  | 'REFUNDED' // dispute resolved in buyer's favour, refund sent/pending
   | 'CANCELLED'
   | 'EXPIRED';
 
-export interface GeoLocation {
-  latitude: number;
-  longitude: number;
+export interface GeoPoint {
+  lat: number;
+  lng: number;
 }
+
+export type KycStatus = 'NONE' | 'PENDING' | 'VERIFIED' | 'REJECTED';
 
 export interface User {
   id: string;
-  telegramId?: number;
-  phoneNumber: string;
+  version: number;
+  telegramId: number;
+  phone: string; // E.164, e.g. +237671234567
   fullName: string;
-  role: UserRole;
-  preferredLanguage: SupportedLanguage;
-  
-  // Merchant specific fields
-  shopName?: string;
+  shopName: string;
   city?: string;
-  isVerifiedMerchant: boolean;
-  kycLevel: 1 | 2; // Level 1 = Phone verified, Level 2 = CNI verified badge
+  lang: Lang;
+  kycStatus: KycStatus;
   cniNumber?: string;
-  cniPhotoUrl?: string;
-  totalVolumeProcessed: number;
-  unlockedCreditLimit: number; // Working capital inventory loan capability (FCFA)
-  
-  createdAt: Date;
-  updatedAt: Date;
+  cniPhotoFileId?: string; // Telegram file id
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface RiderProfile {
+export type RiderStatus = 'PENDING' | 'APPROVED' | 'SUSPENDED';
+
+export interface Rider {
+  id: string;
+  version: number;
   userId: string;
-  telegramId?: number;
+  telegramId: number;
   fullName: string;
-  phoneNumber: string;
+  phone: string;
   cniNumber: string;
-  cniPhotoUrl?: string;
-  vehicleType: 'MOTO' | 'CAR' | 'VAN';
   plateNumber: string;
-  walletBalance: number; // In-app collateral float (FCFA)
-  isActive: boolean;     // /on_duty vs /off_duty
-  trustScore: number;    // 1.0 to 5.0
+  vehicleType: VehicleType;
+  city?: string;
+  status: RiderStatus;
+  onDuty: boolean;
+  /** Collateral float held by the platform on the rider's behalf (FCFA). */
+  floatBalance: number;
+  /** Portion of the float locked against COD orders currently in progress. */
+  floatReserved: number;
   completedDeliveries: number;
-  currentLocation?: GeoLocation;
-  lastLocationUpdate?: Date;
+  location?: GeoPoint;
+  locationUpdatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface TravelAgency {
@@ -70,89 +79,160 @@ export interface TravelAgency {
   name: string;
   city: string;
   terminalName: string;
-  contactPhone: string;
-  location: GeoLocation;
+  location: GeoPoint;
 }
 
-export interface UnifiedOrder {
+export type PayoutKind = 'MERCHANT' | 'FIRST_MILE_RIDER' | 'LAST_MILE_RIDER' | 'BUYER_REFUND';
+/**
+ * PENDING -> SENDING -> SENT | FAILED (retried automatically).
+ * A payout found in SENDING after a crash, or that failed too often, becomes NEEDS_REVIEW:
+ * an admin must check the provider dashboard before it is retried, to avoid paying twice.
+ */
+export type PayoutStatus = 'PENDING' | 'SENDING' | 'SENT' | 'FAILED' | 'NEEDS_REVIEW';
+
+export interface Payout {
   id: string;
-  trackingCode: string;
-  orderType: OrderType;
-  
+  kind: PayoutKind;
+  phone: string;
+  amount: number;
+  status: PayoutStatus;
+  attempts: number;
+  reference?: string;
+  lastError?: string;
+  lastAttemptAt?: string;
+  sentAt?: string;
+}
+
+export interface StatusEvent {
+  status: OrderStatus;
+  at: string;
+  note?: string;
+}
+
+export interface Dispute {
+  reason: string;
+  openedBy: 'BUYER' | 'RIDER' | 'MERCHANT' | 'SYSTEM';
+  openedAt: string;
+  /** Status before the dispute, used to judge whether delivery was attempted. */
+  fromStatus: OrderStatus;
+  resolution?: 'REFUND_BUYER' | 'RELEASE_TO_MERCHANT';
+  resolutionNote?: string;
+  resolvedAt?: string;
+}
+
+export interface Order {
+  id: string;
+  version: number;
+  trackingCode: string; // public, human readable: BS-7KQ4-M2XD
+  type: OrderType;
+  paymentMode: PaymentMode;
+  status: OrderStatus;
+
   merchantId: string;
   merchantName: string;
   merchantPhone: string;
-  isMerchantVerified?: boolean;
+  merchantVerified: boolean; // snapshot at creation time
 
-  recipientPhone: string;
-  recipientName?: string;
-
-  firstMileRiderId?: string;
-  firstMileRiderName?: string;
-  firstMileRiderPhone?: string;
-
-  lastMileRiderId?: string;
-  lastMileRiderName?: string;
-  lastMileRiderPhone?: string;
-
-  agencyId?: string;
-  agencyName?: string;
-  agencyTerminal?: string;
-  agencyWaybillNumber?: string;
-  agencyWaybillUrl?: string;
-
-  pickupAddress: string;
-  pickupLocation?: GeoLocation;
-  dropoffAddress: string;
-  dropoffLocation?: GeoLocation;
-  landmarkNotes?: string;
-  voiceNoteUrl?: string;
+  buyerPhone: string;
+  buyerName?: string;
 
   itemTitle: string;
   itemPrice: number;
   deliveryFee: number;
   agencyFee: number;
-  platformCommission: number;
-  totalAmount: number;
-  codAmount: number;
-  paymentMode: PaymentMode;
-  paymentNetwork?: PaymentNetwork;
-  paymentReference?: string;
+  commission: number;
+  total: number; // what the buyer pays = itemPrice + deliveryFee + agencyFee
 
-  deliveryOtpHash: string;
-  rawReleaseCodeForTesting?: string;
-  verificationAttempts: number;
-  maxVerificationAttempts: number;
-  podPhotoUrl?: string;
-
-  status: EscrowOrderStatus;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CreateUnifiedOrderDTO {
-  orderType: OrderType;
-  merchantName: string;
-  merchantPhone: string;
-  isMerchantVerified?: boolean;
-  recipientPhone: string;
-  recipientName?: string;
-  itemTitle: string;
-  itemPrice: number;
-  deliveryFee: number;
-  agencyId?: string;
-  agencyFee?: number;
-  paymentMode: PaymentMode;
+  /** City the parcel starts from (merchant city or origin agency city); used for dispatch fallback. */
+  originCity?: string;
   pickupAddress: string;
-  pickupLocation?: GeoLocation;
-  dropoffAddress: string;
-  dropoffLocation?: GeoLocation;
-  landmarkNotes?: string;
-  voiceNoteUrl?: string;
+  pickupLocation?: GeoPoint;
+  dropoffAddress?: string;
+  dropoffLocation?: GeoPoint;
+  landmark?: string;
+  voiceNoteId?: string;
+
+  // Inter-city
+  originAgencyId?: string;
+  destinationCity?: string;
+  waybillNumber?: string;
+  waybillPhotoFileId?: string;
+
+  firstMileRiderId?: string;
+  lastMileRiderId?: string;
+  /** COD: rider whose float is reserved against this order. */
+  codRiderId?: string;
+  codReserved: number;
+
+  /** sha256(APP_SECRET, token) of the buyer link token. */
+  buyerTokenHash: string;
+  /** Hash of the device session that started payment; only it may see the release code. */
+  buyerSessionHash?: string;
+  /** AES-256-GCM encrypted 4-digit release code. */
+  releaseCodeEnc: string;
+  codeAttempts: number;
+
+  payment: {
+    operator?: Operator;
+    payerPhone?: string;
+    reference?: string;
+    /** Session hash of the device that started the current attempt; promoted on confirmation. */
+    pendingSessionHash?: string;
+    initiatedAt?: string;
+    confirmedAt?: string;
+    lastCheckedAt?: string;
+  };
+
+  payouts: Payout[];
+  dispute?: Dispute;
+  history: StatusEvent[];
+
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface DispatchCandidate {
-  rider: RiderProfile;
-  distanceKm: number;
-  isFloatEligible: boolean;
+export type LedgerAccount =
+  | 'GATEWAY_CLEARING' // money at the payment provider (in/out of mobile money)
+  | 'ESCROW' // buyer funds held for an order
+  | 'MERCHANT_PAYABLE'
+  | 'RIDER_PAYABLE'
+  | 'BUYER_REFUND_PAYABLE'
+  | 'PLATFORM_REVENUE'
+  | 'RIDER_FLOAT'; // rider collateral float
+
+export interface LedgerLine {
+  account: LedgerAccount;
+  /** Order id or rider id the line belongs to. */
+  refId: string;
+  /** Signed FCFA amount; lines of one journal sum to zero. */
+  amount: number;
+}
+
+export interface Journal {
+  key: string; // idempotency key, e.g. "order:<id>:settle"
+  description: string;
+  lines: LedgerLine[];
+  createdAt: string;
+}
+
+export type TopupStatus = 'PENDING' | 'CONFIRMED' | 'FAILED';
+
+export interface FloatTopup {
+  id: string;
+  riderId: string;
+  amount: number;
+  phone: string;
+  reference?: string;
+  status: TopupStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Media {
+  id: string;
+  orderId: string;
+  mime: string;
+  data: Buffer;
+  createdAt: string;
 }

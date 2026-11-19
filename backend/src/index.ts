@@ -1,58 +1,68 @@
-import dotenv from 'dotenv';
-dotenv.config();
+import 'dotenv/config';
+import { webhookCallback } from 'grammy';
+import { createApp, startJobs } from './app.js';
+import { createServer } from './api/server.js';
+import { createBot } from './bot/bot.js';
+import { loadConfig } from './config.js';
+import { seedDemoData } from './seed.js';
 
-import { EscrowService } from './services/escrow.service.js';
-import { createExpressApp } from './api/server.js';
-import { createTelegramBot } from './bot/bot.js';
+async function main() {
+  const config = loadConfig();
+  const app = createApp(config);
+  await app.store.migrate();
 
-async function bootstrap() {
-  const escrowService = new EscrowService();
-  const app = createExpressApp(escrowService);
-  const port = process.env.PORT || 4000;
+  if (config.SEED_DEMO_DATA) await seedDemoData(app);
 
-  // Start HTTP Server
-  app.listen(port, () => {
-    console.log(`=======================================================`);
-    console.log(`🚀 Bayam-Sellam Escrow Backend running on port ${port}`);
-    console.log(`🌐 Checkout Web UI: http://localhost:${port}/checkout.html`);
-    console.log(`📱 Health Check:    http://localhost:${port}/api/health`);
-    console.log(`=======================================================`);
+  const bot = config.TELEGRAM_BOT_TOKEN ? createBot(app, config.TELEGRAM_BOT_TOKEN) : undefined;
+
+  const server = createServer(app, {
+    mount: (http) => {
+      if (bot && config.TELEGRAM_USE_WEBHOOK) {
+        http.post('/api/webhooks/telegram', webhookCallback(bot, 'express', { secretToken: config.TELEGRAM_WEBHOOK_SECRET }));
+      }
+    }
   });
 
-  // Start Telegram Bot
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (botToken && !botToken.includes('MOCK_') && !botToken.includes('your_telegram')) {
-    try {
-      const bot = createTelegramBot(botToken, escrowService);
-      console.log('🤖 Launching Telegram Bot long-polling...');
-      bot.start({
-        onStart: (botInfo) => {
-          console.log(`✅ Telegram Bot @${botInfo.username} is active!`);
-        }
+  const listener = server.listen(config.PORT, () => {
+    console.log(`BayamSafe API on :${config.PORT} · storage=${app.store.kind} · payments=${app.gateway.name} · env=${config.NODE_ENV}`);
+    if (app.store.kind === 'memory') console.warn('⚠️  In-memory storage: data is lost on restart. Set DATABASE_URL for real use.');
+    if (app.gateway.name === 'simulated') console.warn('⚠️  Simulated payments: no real money moves.');
+  });
+
+  if (bot) {
+    await bot.init();
+    if (config.TELEGRAM_USE_WEBHOOK) {
+      await bot.api.setWebhook(`${config.PUBLIC_URL.replace(/\/$/, '')}/api/webhooks/telegram`, {
+        secret_token: config.TELEGRAM_WEBHOOK_SECRET,
+        allowed_updates: ['message', 'edited_message', 'callback_query']
       });
-    } catch (err) {
-      console.error('Failed to start Telegram Bot:', err);
+      console.log(`Telegram bot @${bot.botInfo.username} via webhook`);
+    } else {
+      await bot.api.deleteWebhook();
+      void bot.start({ allowed_updates: ['message', 'edited_message', 'callback_query'] });
+      console.log(`Telegram bot @${bot.botInfo.username} via long polling`);
     }
   } else {
-    console.log('ℹ️  TELEGRAM_BOT_TOKEN not configured or in mock mode. Bot polling skipped.');
-    console.log('👉 To connect a real bot: create one on Telegram via @BotFather and set TELEGRAM_BOT_TOKEN in .env');
+    console.log('TELEGRAM_BOT_TOKEN not set: bot disabled (create one with @BotFather).');
   }
 
-  // Pre-seed a sample transaction for immediate testing
-  const sampleOrder = await escrowService.createOrder({
-    sellerName: 'Boutique Chic Akwa',
-    sellerPhone: '237671234567',
-    itemTitle: 'Robe de Soirée & Chaussures (Douala)',
-    itemPrice: 25000,
-    deliveryFee: 1500,
-    buyerPhone: '237691234567',
-    deliveryAddress: 'Douala Bonamoussadi, Carrefour du Marché'
-  });
-  console.log(`💡 Pre-seeded test order created: Code [${sampleOrder.orderCode}]`);
-  console.log(`   Direct test URL: http://localhost:${port}/checkout.html?code=${sampleOrder.orderCode}`);
+  // Catch up on anything left from a previous run, then keep jobs going.
+  await app.orders.processAllPendingPayouts().catch((e) => console.error('[startup] payouts:', e));
+  const stopJobs = startJobs(app);
+
+  const shutdown = async (signal: string) => {
+    console.log(`${signal} received, shutting down…`);
+    stopJobs();
+    await bot?.stop().catch(() => undefined);
+    listener.close();
+    await app.store.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
-bootstrap().catch((err) => {
-  console.error('Fatal bootstrap error:', err);
+main().catch((err) => {
+  console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

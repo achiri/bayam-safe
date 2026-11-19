@@ -1,199 +1,103 @@
-import { RiderProfile, User, UserRole } from '../domain/types.js';
+import { AppError, forbidden, invalid, notFound } from '../domain/errors.js';
+import { normalizeCameroonPhone } from '../domain/phone.js';
+import { newId } from '../domain/secrets.js';
+import { Lang, User } from '../domain/types.js';
+import { Store } from '../storage/store.js';
+import { EventBus } from './events.js';
+
+export interface TelegramContact {
+  phone_number: string;
+  first_name?: string;
+  last_name?: string;
+  user_id?: number;
+}
+
+const clean = (s: string, max: number) => s.replace(/\s+/g, ' ').trim().slice(0, max);
 
 export class UserService {
-  private users: Map<string, User> = new Map(); // key = telegramId or phone
-  private riders: Map<string, RiderProfile> = new Map();
+  constructor(
+    private readonly store: Store,
+    private readonly events: EventBus
+  ) {}
 
-  constructor() {
-    this.seedInitialUsers();
+  getByTelegram(telegramId: number) {
+    return this.store.getUserByTelegram(telegramId);
   }
 
-  private seedInitialUsers() {
-    // Seed a verified pilot merchant
-    const demoMerchant: User = {
-      id: 'merchant_seed_01',
-      telegramId: 10001,
-      phoneNumber: '+237671112233',
-      fullName: 'Boutique Chic Akwa',
-      shopName: 'Boutique Chic Akwa',
-      city: 'Douala',
-      role: 'MERCHANT',
-      preferredLanguage: 'fr',
-      isVerifiedMerchant: true,
-      kycLevel: 2,
-      cniNumber: '1102938475',
-      cniPhotoUrl: 'https://storage.bayamsafe.cm/cni/demo_cni.jpg',
-      totalVolumeProcessed: 650000, // 650,000 FCFA processed
-      unlockedCreditLimit: 195000,   // 195,000 FCFA inventory loan unlocked!
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-    this.users.set('+237671112233', demoMerchant);
-
-    // Seed top riders
-    const demoRider1: RiderProfile = {
-      userId: 'rider_dla_01',
-      telegramId: 20001,
-      fullName: 'Jean-Pierre Moto Akwa',
-      phoneNumber: '+237675112233',
-      cniNumber: '1092837461',
-      vehicleType: 'MOTO',
-      plateNumber: 'LT-849-AB',
-      walletBalance: 35000,
-      isActive: true,
-      trustScore: 4.95,
-      completedDeliveries: 142,
-      currentLocation: { latitude: 4.0511, longitude: 9.7085 },
-      lastLocationUpdate: new Date()
-    };
-
-    const demoRider2: RiderProfile = {
-      userId: 'rider_yde_01',
-      telegramId: 20002,
-      fullName: 'Patrick Moto Mokolo',
-      phoneNumber: '+237699778899',
-      cniNumber: '1092837463',
-      vehicleType: 'MOTO',
-      plateNumber: 'CE-312-XY',
-      walletBalance: 50000,
-      isActive: true,
-      trustScore: 5.0,
-      completedDeliveries: 210,
-      currentLocation: { latitude: 3.8667, longitude: 11.5167 },
-      lastLocationUpdate: new Date()
-    };
-
-    this.riders.set(demoRider1.userId, demoRider1);
-    this.riders.set(demoRider2.userId, demoRider2);
+  async require(telegramId: number): Promise<User> {
+    const u = await this.store.getUserByTelegram(telegramId);
+    if (!u) throw new AppError('NOT_REGISTERED', 'Not registered: share your phone contact with the bot first (/start).', 403);
+    return u;
   }
 
   /**
-   * 1-Tap Onboarding via Telegram Native Phone Contact
+   * 1-tap sign-up from Telegram's "share contact" button. The contact must be the sender's
+   * own (contact.user_id === sender id) so nobody can register with someone else's MoMo number.
    */
-  registerUserFromContact(
-    telegramId: number,
-    phoneNumber: string,
-    fullName: string,
-    role: UserRole = 'MERCHANT',
-    shopName?: string,
-    city: string = 'Douala'
-  ): User {
-    const cleanPhone = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
-    let user = this.users.get(cleanPhone) || Array.from(this.users.values()).find(u => u.telegramId === telegramId);
+  async registerFromContact(telegramId: number, contact: TelegramContact, lang: Lang = 'fr'): Promise<User> {
+    if (contact.user_id !== telegramId) throw forbidden('Please share your own contact using the button.');
+    const phone = normalizeCameroonPhone(contact.phone_number);
+    const fullName = clean(`${contact.first_name ?? ''} ${contact.last_name ?? ''}`, 80) || 'Vendeur';
+    const now = new Date().toISOString();
 
-    if (user) {
-      user.telegramId = telegramId;
-      user.fullName = fullName;
-      user.role = role;
-      if (shopName) user.shopName = shopName;
-      user.city = city;
-      user.updatedAt = new Date();
-      return user;
+    const existing = await this.store.getUserByTelegram(telegramId);
+    if (existing) {
+      return this.store.updateUser({ ...existing, phone, updatedAt: now });
     }
-
-    user = {
-      id: `user_${Date.now()}`,
+    const user: User = {
+      id: newId(),
+      version: 1,
       telegramId,
-      phoneNumber: cleanPhone,
+      phone,
       fullName,
-      shopName: shopName || fullName,
-      city,
-      role,
-      preferredLanguage: 'fr',
-      isVerifiedMerchant: false,
-      kycLevel: 1, // Phone verified
-      totalVolumeProcessed: 0,
-      unlockedCreditLimit: 0,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      shopName: fullName,
+      lang,
+      kycStatus: 'NONE',
+      createdAt: now,
+      updatedAt: now
     };
-
-    this.users.set(cleanPhone, user);
+    await this.store.insertUser(user);
     return user;
   }
 
-  /**
-   * Level 2 KYC Upgrade: CNI Submission -> Green Verified Badge
-   */
-  upgradeMerchantToVerified(phoneNumber: string, cniNumber: string, cniPhotoUrl?: string): User {
-    const cleanPhone = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
-    const user = this.users.get(cleanPhone);
-    if (!user) throw new Error('Utilisateur introuvable');
-
-    user.cniNumber = cniNumber;
-    user.cniPhotoUrl = cniPhotoUrl || `https://storage.bayamsafe.cm/cni/${user.id}.jpg`;
-    user.isVerifiedMerchant = true;
-    user.kycLevel = 2;
-    user.updatedAt = new Date();
-
-    console.log(`[MERCHANT VERIFIED 🏅] ${user.shopName} (${user.phoneNumber}) is now a Level 2 Verified Merchant!`);
-    return user;
+  async updateProfile(telegramId: number, patch: { shopName?: string; city?: string; lang?: Lang }): Promise<User> {
+    const u = await this.require(telegramId);
+    if (patch.shopName !== undefined) {
+      const s = clean(patch.shopName, 60);
+      if (s.length < 2) throw invalid('Shop name too short');
+      u.shopName = s;
+    }
+    if (patch.city !== undefined) u.city = clean(patch.city, 40);
+    if (patch.lang) u.lang = patch.lang;
+    u.updatedAt = new Date().toISOString();
+    return this.store.updateUser(u);
   }
 
-  /**
-   * Records completed order volume and recalculates working capital inventory nano-credit
-   */
-  recordMerchantTransaction(phoneNumber: string, amount: number): User | undefined {
-    const cleanPhone = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
-    const user = this.users.get(cleanPhone);
-    if (!user) return undefined;
-
-    user.totalVolumeProcessed += amount;
-    // Working capital: 30% of total processed volume unlocked up to 250,000 FCFA
-    user.unlockedCreditLimit = Math.min(250000, Math.round(user.totalVolumeProcessed * 0.3));
-    user.updatedAt = new Date();
-    return user;
+  /** Merchant submits ID for the verified badge. The badge is only granted after admin review. */
+  async submitKyc(telegramId: number, cniNumber: string, cniPhotoFileId: string): Promise<User> {
+    const u = await this.require(telegramId);
+    const cni = cniNumber.replace(/\s/g, '').toUpperCase();
+    if (!/^[A-Z0-9]{6,20}$/.test(cni)) throw invalid('Invalid ID number');
+    if (!cniPhotoFileId) throw invalid('A photo of the ID card is required');
+    if (u.kycStatus === 'VERIFIED') throw invalid('Already verified');
+    Object.assign(u, { cniNumber: cni, cniPhotoFileId, kycStatus: 'PENDING', updatedAt: new Date().toISOString() });
+    const saved = await this.store.updateUser(u);
+    this.events.emit({ type: 'kyc.submitted', user: saved });
+    return saved;
   }
 
-  /**
-   * Rider Registration Flow
-   */
-  registerRider(data: {
-    telegramId: number;
-    fullName: string;
-    phoneNumber: string;
-    cniNumber: string;
-    plateNumber: string;
-    vehicleType: 'MOTO' | 'CAR' | 'VAN';
-    initialFloatDeposit?: number;
-  }): RiderProfile {
-    const cleanPhone = data.phoneNumber.startsWith('+') ? data.phoneNumber : `+${data.phoneNumber}`;
-    const userId = `rider_${Date.now()}`;
-
-    const rider: RiderProfile = {
-      userId,
-      telegramId: data.telegramId,
-      fullName: data.fullName,
-      phoneNumber: cleanPhone,
-      cniNumber: data.cniNumber,
-      plateNumber: data.plateNumber,
-      vehicleType: data.vehicleType,
-      walletBalance: data.initialFloatDeposit || 5000,
-      isActive: true,
-      trustScore: 5.0,
-      completedDeliveries: 0,
-      lastLocationUpdate: new Date()
-    };
-
-    this.riders.set(userId, rider);
-    console.log(`[RIDER ONBOARDED 🏍️] ${rider.fullName} (${rider.plateNumber}) with float ${rider.walletBalance} FCFA`);
-    return rider;
+  async decideKyc(userId: string, approve: boolean): Promise<User> {
+    const u = await this.store.getUser(userId);
+    if (!u) throw notFound('User');
+    if (u.kycStatus !== 'PENDING') throw invalid(`KYC is ${u.kycStatus}, not PENDING`);
+    u.kycStatus = approve ? 'VERIFIED' : 'REJECTED';
+    u.updatedAt = new Date().toISOString();
+    const saved = await this.store.updateUser(u);
+    this.events.emit({ type: 'kyc.decided', user: saved });
+    return saved;
   }
 
-  /**
-   * Get Top 5 Riders Leaderboard
-   */
-  getRiderLeaderboard(): RiderProfile[] {
-    return Array.from(this.riders.values())
-      .sort((a, b) => b.completedDeliveries - a.completedDeliveries)
-      .slice(0, 5);
-  }
-
-  getUser(phoneOrId: string): User | undefined {
-    return this.users.get(phoneOrId) || Array.from(this.users.values()).find(u => u.id === phoneOrId);
-  }
-
-  getRider(idOrPhone: string): RiderProfile | undefined {
-    return this.riders.get(idOrPhone) || Array.from(this.riders.values()).find(r => r.phoneNumber === idOrPhone);
+  pendingKyc() {
+    return this.store.listUsersByKyc('PENDING');
   }
 }

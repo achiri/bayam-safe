@@ -3,379 +3,368 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BayamSafe - Séquestre & Micro-Logistique Cameroun</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <meta name="referrer" content="no-referrer">
+  <title>BayamSafe Checkout</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    #mapPicker { height: 160px; border-radius: 1rem; z-index: 1; }
-    .pulse-record { animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+    #map { height: 180px; border-radius: 0.75rem; z-index: 0; }
+    .pulse { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 50% { opacity: .45; } }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 flex justify-center p-3 sm:p-6">
-  <div class="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-slate-200">
-    
-    <!-- Top Header -->
-    <div class="bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-800 p-5 text-white flex justify-between items-center">
-      <div>
-        <div class="flex items-center gap-2">
-          <i class="fa-solid fa-shield-halved text-amber-300 text-xl"></i>
-          <h1 class="font-black text-lg tracking-tight">BayamSafe</h1>
-          <span class="bg-white/20 text-[10px] font-black uppercase px-2 py-0.5 rounded-full tracking-wider">CM 🇨🇲</span>
-        </div>
-        <p class="text-xs text-emerald-100 mt-0.5">Paiement Sécurisé & Livraison GPS</p>
-      </div>
-      <button id="langToggleBtn" class="bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold transition flex items-center gap-1 backdrop-blur-sm">
-        <i class="fa-solid fa-globe"></i> <span id="currentLangLabel">EN</span>
-      </button>
+<main class="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col border border-slate-200">
+
+  <header class="bg-emerald-700 p-5 text-white flex justify-between items-center">
+    <div>
+      <h1 class="font-black text-lg">🛡️ BayamSafe</h1>
+      <p class="text-xs text-emerald-100" data-i18n="tagline"></p>
     </div>
+    <button id="langBtn" class="bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold"></button>
+  </header>
 
-    <!-- Main Body Content -->
-    <div class="p-5 flex-1 flex flex-col justify-between space-y-4">
-      
-      <!-- Verified Merchant Trust Banner -->
-      <div id="merchantBadgeBanner" class="bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-amber-500/10 border border-emerald-300 rounded-2xl p-3 flex items-center justify-between">
-        <div class="flex items-center gap-2.5">
-          <div class="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">
-            <i class="fa-solid fa-certificate text-amber-300"></i>
-          </div>
-          <div>
-            <div class="flex items-center gap-1">
-              <span class="font-extrabold text-xs text-slate-900" id="merchantNameDisplay">Boutique Chic Akwa</span>
-              <i class="fa-solid fa-circle-check text-emerald-600 text-xs" title="Vendeur Vérifié KYC Niveau 2"></i>
-            </div>
-            <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">🏅 Vendeur Vérifié BayamSafe</span>
-          </div>
-        </div>
-        <span class="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-1 rounded-full flex items-center gap-1">
-          <i class="fa-solid fa-shield-check"></i> 100% Garanti
-        </span>
-      </div>
+  <div class="p-5 space-y-4">
+    <div id="error" class="hidden bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-3"></div>
+    <div id="loading" class="text-center text-sm text-slate-500 py-10" data-i18n="loading"></div>
 
-      <!-- Order Summary Card -->
-      <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 text-sm space-y-2">
-        <div class="flex justify-between items-center text-xs">
-          <span class="font-mono font-bold text-slate-500" id="orderCodeDisplay">BS-DLA-80398</span>
-          <span id="orderStatusBadge" class="bg-amber-100 text-amber-800 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
-            En attente de paiement
-          </span>
-        </div>
-
+    <div id="content" class="hidden space-y-4">
+      <!-- Merchant -->
+      <section class="flex items-center justify-between rounded-2xl border border-slate-200 p-3">
         <div>
-          <h2 class="text-base font-extrabold text-slate-900" id="itemTitleDisplay">Colis en préparation</h2>
-          <div class="flex justify-between items-center text-xs text-slate-600 pt-1">
-            <span>Prix article :</span>
-            <span class="font-bold text-slate-800" id="itemPriceDisplay">0 FCFA</span>
+          <div class="font-extrabold text-sm" id="merchantName"></div>
+          <div id="verifiedBadge" class="hidden text-[11px] font-bold text-emerald-700" data-i18n="verified"></div>
+          <div id="unverifiedBadge" class="hidden text-[11px] text-slate-500" data-i18n="unverified"></div>
+        </div>
+        <span class="font-mono text-xs text-slate-500" id="trackingCode"></span>
+      </section>
+
+      <!-- Order summary -->
+      <section class="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-sm space-y-1.5">
+        <div class="flex justify-between items-start gap-2">
+          <h2 class="text-base font-extrabold" id="itemTitle"></h2>
+          <span id="statusBadge" class="shrink-0 bg-amber-100 text-amber-800 text-[11px] font-bold px-2.5 py-0.5 rounded-full"></span>
+        </div>
+        <div class="flex justify-between text-xs text-slate-600"><span data-i18n="item"></span><span class="font-bold" id="itemPrice"></span></div>
+        <div class="flex justify-between text-xs text-slate-600"><span data-i18n="delivery"></span><span class="font-bold" id="deliveryFee"></span></div>
+        <div id="agencyRow" class="hidden flex justify-between text-xs text-slate-600"><span data-i18n="agencyFee"></span><span class="font-bold" id="agencyFee"></span></div>
+        <div id="routeRow" class="hidden text-xs text-slate-600"></div>
+        <div class="flex justify-between pt-2 border-t border-slate-200 font-extrabold">
+          <span id="totalLabel"></span><span class="text-emerald-700" id="total"></span>
+        </div>
+      </section>
+
+      <!-- Release code -->
+      <section id="codeSection" class="hidden bg-emerald-50 border-2 border-emerald-500 rounded-2xl p-4 text-center space-y-1">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-widest" data-i18n="codeTitle"></div>
+        <div class="font-mono text-4xl font-black text-emerald-700 tracking-[0.3em]" id="releaseCode"></div>
+        <p class="text-xs text-red-600 font-bold" data-i18n="codeWarning"></p>
+      </section>
+      <section id="otherDevice" class="hidden bg-amber-50 border border-amber-300 rounded-2xl p-3 text-xs text-amber-900" data-i18n="otherDevice"></section>
+
+      <!-- Payment -->
+      <section id="paySection" class="hidden space-y-3">
+        <label class="block text-xs font-bold text-slate-700 uppercase" for="payerPhone" data-i18n="payWith"></label>
+        <input id="payerPhone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="6XX XX XX XX"
+               class="w-full p-3 border border-slate-300 rounded-xl text-base focus:ring-2 focus:ring-emerald-500">
+        <div id="operatorHint" class="text-xs text-slate-500 h-4"></div>
+        <button id="payBtn" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold py-3.5 rounded-2xl"></button>
+        <p class="text-[11px] text-slate-500" data-i18n="escrowExplainer"></p>
+      </section>
+
+      <section id="pendingSection" class="hidden bg-sky-50 border border-sky-200 rounded-2xl p-4 text-sm space-y-2">
+        <div class="font-bold pulse" data-i18n="approveOnPhone"></div>
+        <div class="text-xs text-slate-600" id="ussdHint"></div>
+        <button id="simulateBtn" class="hidden w-full bg-slate-800 text-white text-xs font-bold py-2 rounded-xl" data-i18n="simulate"></button>
+      </section>
+
+      <section id="codInfo" class="hidden bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs" data-i18n="codInfo"></section>
+
+      <!-- Delivery details -->
+      <section id="deliverySection" class="hidden space-y-2 bg-emerald-50/40 p-4 rounded-2xl border border-emerald-200">
+        <div class="text-xs font-bold text-emerald-900 uppercase" data-i18n="deliveryPoint"></div>
+        <button id="gpsBtn" class="w-full bg-white text-emerald-800 text-xs font-bold py-2.5 rounded-xl border border-emerald-300" data-i18n="useGps"></button>
+        <div id="map" class="w-full border border-slate-300"></div>
+        <div id="gpsStatus" class="text-[11px] text-emerald-700"></div>
+        <input id="addressInput" maxlength="200" class="w-full text-sm p-2.5 bg-white border border-slate-300 rounded-xl">
+        <input id="landmarkInput" maxlength="200" class="w-full text-sm p-2.5 bg-white border border-slate-300 rounded-xl">
+        <button id="saveDeliveryBtn" class="w-full bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-xl" data-i18n="saveDelivery"></button>
+
+        <div class="pt-2 border-t border-emerald-200 space-y-2">
+          <div class="text-xs font-bold text-amber-900"><span data-i18n="voiceTitle"></span> <span id="voiceTimer" class="font-mono">0s / 15s</span></div>
+          <div class="flex gap-2 items-center">
+            <button id="recordBtn" class="flex-1 bg-amber-500 text-white text-xs font-bold py-2 rounded-xl" data-i18n="record"></button>
+            <audio id="voicePlayback" controls class="hidden h-9 w-40"></audio>
           </div>
-          <div class="flex justify-between items-center text-xs text-slate-600">
-            <span class="flex items-center gap-1">
-              <i class="fa-solid fa-motorcycle text-slate-400"></i> Course Livreur Moto :
-            </span>
-            <span class="font-bold text-slate-800" id="deliveryFeeDisplay">0 FCFA</span>
-          </div>
+          <div id="voiceStatus" class="text-[11px] text-slate-600"></div>
         </div>
+      </section>
 
-        <div class="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-extrabold text-slate-900">
-          <span>Total à bloquer en séquestre :</span>
-          <span class="text-emerald-700 text-base font-black" id="totalAmountDisplay">0 FCFA</span>
-        </div>
-      </div>
+      <!-- Timeline -->
+      <section class="text-xs">
+        <div class="font-bold text-slate-700 mb-1" data-i18n="timeline"></div>
+        <ol id="timeline" class="space-y-1 text-slate-600"></ol>
+      </section>
 
-      <!-- 1. GPS Delivery Pin-Drop Section -->
-      <div class="space-y-2 bg-emerald-50/40 p-4 rounded-2xl border border-emerald-200">
-        <div class="flex justify-between items-center">
-          <label class="text-xs font-bold text-emerald-900 uppercase flex items-center gap-1.5">
-            <i class="fa-solid fa-location-crosshairs text-emerald-600"></i>
-            Point GPS Exact de Livraison
-          </label>
-          <span id="gpsAccuracy" class="text-[10px] text-emerald-700 font-bold">Satellite Prêt</span>
-        </div>
-
-        <button type="button" onclick="acquireExactGPS()" id="btnGetGPS" class="w-full bg-white hover:bg-emerald-50 text-emerald-800 text-xs font-bold py-2.5 px-3 rounded-xl border border-emerald-300 shadow-sm flex items-center justify-center gap-2 transition active:scale-95">
-          <i class="fa-solid fa-satellite-dish text-emerald-600"></i>
-          <span>📍 Utiliser ma position GPS exacte actuelle</span>
-        </button>
-
-        <div id="mapPicker" class="w-full my-2 border border-slate-300 shadow-inner"></div>
-
-        <div>
-          <label class="block text-[11px] font-semibold text-slate-600 mb-1">
-            Repère informel (Boutique, carrefour, couleur barrière) :
-          </label>
-          <input type="text" id="landmarkInput" placeholder="Ex: Portail bleu face pharmacie du peuple" class="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500">
-        </div>
-      </div>
-
-      <!-- 2. WOW Feature: 15-Second Audio Guide (Voice Note Recorder) -->
-      <div class="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-3.5 space-y-2">
-        <div class="flex justify-between items-center">
-          <span class="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-            <i class="fa-solid fa-microphone-lines text-amber-600"></i>
-            Note Vocale d'Itinéraire (15s max)
-          </span>
-          <span id="voiceDurationDisplay" class="text-[10px] font-mono font-bold text-amber-700">00:00 / 00:15</span>
-        </div>
-        <p class="text-[11px] text-slate-600 leading-snug">
-          Expliquez rapidement votre quartier en Pidgin ou Français pour que le motoman arrive sans vous appeler :
-        </p>
-        <div class="flex gap-2 items-center">
-          <button type="button" id="btnRecordVoice" onclick="toggleVoiceRecording()" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition">
-            <i class="fa-solid fa-microphone"></i> <span id="recordBtnText">Enregistrer la Voix</span>
-          </button>
-          <audio id="voicePlayback" controls class="hidden h-9 w-44"></audio>
-        </div>
-      </div>
-
-      <!-- Payment Section -->
-      <div id="paymentSelectionSection" class="space-y-3 pt-1">
-        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-          Paiement Mobile Sécurisé (MoMo / Orange Money)
-        </label>
-        
-        <div class="grid grid-cols-2 gap-3">
-          <button type="button" onclick="selectOperator('MTN')" id="btnOperatorMTN" class="border-2 border-yellow-400 bg-yellow-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition">
-            <span class="font-black text-sm text-yellow-800">MTN MoMo</span>
-            <span class="text-[10px] text-yellow-700 font-semibold">*126# USSD Prompt</span>
-          </button>
-          <button type="button" onclick="selectOperator('ORANGE')" id="btnOperatorOrange" class="border-2 border-slate-200 hover:border-orange-500 rounded-2xl p-3 flex flex-col items-center gap-1 transition">
-            <span class="font-black text-sm text-orange-600">Orange Money</span>
-            <span class="text-[10px] text-orange-700 font-semibold">#150# USSD Prompt</span>
-          </button>
-        </div>
-
-        <button id="btnPay" onclick="triggerPayment()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition active:scale-95">
-          <i class="fa-solid fa-lock"></i>
-          <span>Bloquer les Fonds en Séquestre</span>
-        </button>
-      </div>
-
-      <!-- 4-Digit Release Code Section (Shown after payment) -->
-      <div id="escrowLockedSection" class="hidden space-y-3">
-        <div class="bg-gradient-to-br from-emerald-50 to-teal-100 border-2 border-emerald-500 rounded-2xl p-4 text-center space-y-2">
-          <div class="w-11 h-11 bg-emerald-600 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
-            <i class="fa-solid fa-key text-lg"></i>
-          </div>
-          <h3 class="font-black text-slate-900 text-sm">Fonds Sécurisés en Séquestre !</h3>
-          
-          <div class="bg-white rounded-xl py-3 px-4 shadow-sm border border-emerald-200">
-            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CODE SECRET DE LIBÉRATION</div>
-            <div class="font-mono text-3xl font-black text-emerald-700 tracking-widest my-1" id="releaseCodeDisplay">----</div>
-            <div class="text-[10px] text-red-600 font-bold">⚠️ Ne donnez ce code au livreur qu'après avoir inspecté le colis !</div>
-          </div>
-        </div>
-
-        <!-- Rider Navigation Deep Link -->
-        <a id="riderNavBtn" href="https://maps.google.com" target="_blank" class="w-full bg-slate-900 hover:bg-black text-white text-xs font-bold py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 transition">
-          <i class="fa-solid fa-diamond-turn-right text-emerald-400"></i>
-          <span>Aperçu Livreur : Suivre l'Itinéraire Google Maps</span>
-        </a>
-      </div>
-
+      <button id="disputeBtn" class="hidden w-full border border-red-300 text-red-700 text-xs font-bold py-2.5 rounded-xl" data-i18n="reportProblem"></button>
     </div>
-
-    <!-- Trust Footer -->
-    <div class="p-3 bg-slate-50 border-t border-slate-200 text-center text-[10px] text-slate-500 flex items-center justify-center gap-1.5 font-medium">
-      <i class="fa-solid fa-shield-halved text-emerald-600"></i>
-      <span>BayamSafe - Séquestre Social Commerce Agréé Cameroun</span>
-    </div>
-
   </div>
 
-  <script>
-    let map, marker;
-    let currentCoords = { lat: 4.0511, lng: 9.7085 }; // Douala Akwa
-    let currentOrder = null;
+  <footer class="p-3 bg-slate-50 border-t border-slate-200 text-center text-[10px] text-slate-500" data-i18n="footer"></footer>
+</main>
 
-    // 1. Audio MediaRecorder Implementation (15s Max Voice Note)
-    let mediaRecorder, audioChunks = [], recordInterval, recordSeconds = 0;
-
-    async function toggleVoiceRecording() {
-      const btn = document.getElementById('btnRecordVoice');
-      const text = document.getElementById('recordBtnText');
-      const timerDisplay = document.getElementById('voiceDurationDisplay');
-      const audioPlayback = document.getElementById('voicePlayback');
-
-      if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
-        clearInterval(recordInterval);
-        btn.classList.remove('bg-red-600', 'pulse-record');
-        btn.classList.add('bg-amber-500');
-        text.innerText = "Réenregistrer la Voix";
-        return;
-      }
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-        recordSeconds = 0;
-
-        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
-        mediaRecorder.onstop = () => {
-          const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
-          const audioUrl = URL.createObjectURL(audioBlob);
-          audioPlayback.src = audioUrl;
-          audioPlayback.classList.remove('hidden');
-        };
-
-        mediaRecorder.start();
-        btn.classList.remove('bg-amber-500');
-        btn.classList.add('bg-red-600', 'pulse-record');
-        text.innerText = "Arrêter l'enregistrement";
-
-        recordInterval = setInterval(() => {
-          recordSeconds++;
-          const formatted = recordSeconds < 10 ? `0${recordSeconds}` : recordSeconds;
-          timerDisplay.innerText = `00:${formatted} / 00:15`;
-          if (recordSeconds >= 15) {
-            mediaRecorder.stop();
-            clearInterval(recordInterval);
-            btn.classList.remove('bg-red-600', 'pulse-record');
-            btn.classList.add('bg-amber-500');
-            text.innerText = "Réenregistrer la Voix";
-          }
-        }, 1000);
-
-      } catch (err) {
-        alert("Microphone non accessible ou autorisation refusée.");
-      }
+<script>
+(() => {
+  const I18N = {
+    fr: {
+      tagline: 'Paiement sécurisé & livraison', loading: 'Chargement…', verified: '🏅 Vendeur vérifié (pièce d’identité contrôlée)',
+      unverified: 'Vendeur non vérifié', item: 'Article', delivery: 'Livraison', agencyFee: 'Frais d’agence',
+      totalEscrow: 'Total à bloquer en séquestre', totalCod: 'Total à payer en cash au livreur',
+      codeTitle: 'Votre code secret de libération', codeWarning: '⚠️ Donnez ce code au livreur seulement après avoir inspecté le colis.',
+      otherDevice: 'Le code de libération s’affiche uniquement sur le téléphone qui a effectué le paiement.',
+      payWith: 'Numéro MTN MoMo ou Orange Money', pay: (t) => `🔒 Payer ${t} en séquestre`,
+      escrowExplainer: 'Votre argent reste bloqué chez BayamSafe. Le vendeur n’est payé que lorsque vous donnez le code au livreur après vérification du colis.',
+      approveOnPhone: '📲 Validez le paiement sur votre téléphone (saisissez votre code PIN).',
+      ussd: (c) => `Si rien ne s’affiche, composez ${c} pour voir les paiements en attente.`,
+      simulate: 'Mode test : simuler la validation', codInfo: '💵 Vous payez en cash au livreur après avoir inspecté le colis. Donnez-lui ensuite le code ci-dessus.',
+      deliveryPoint: '📍 Point de livraison', useGps: '📍 Utiliser ma position actuelle', saveDelivery: 'Enregistrer l’adresse',
+      addressPh: 'Quartier / adresse', landmarkPh: 'Repère : portail bleu face pharmacie…', saved: '✅ Enregistré',
+      voiceTitle: '🎙️ Indications vocales (15 s max)', record: 'Enregistrer', stop: 'Arrêter', voiceSaved: '✅ Note vocale envoyée au livreur',
+      timeline: 'Suivi', reportProblem: '⚠️ Signaler un problème avec le colis', disputePrompt: 'Décrivez le problème :',
+      disputed: 'Litige ouvert. L’argent reste bloqué jusqu’à décision.', invalidLink: 'Lien invalide ou expiré. Demandez un nouveau lien au vendeur.',
+      footer: 'BayamSafe · Séquestre pour le commerce en ligne au Cameroun', gpsFix: (a) => `Position fixée (±${a} m)`,
+      gpsMoved: 'Marqueur déplacé', gpsFail: 'Position indisponible : déplacez le marqueur sur la carte.', micFail: 'Micro non accessible.',
+      operator: { MTN: 'MTN Mobile Money', ORANGE: 'Orange Money' }, network: 'Erreur réseau, réessayez.',
+      status: { PENDING_PAYMENT: 'En attente de paiement', AWAITING_RIDER: 'Payé · recherche de livreur', RIDER_ASSIGNED: 'Livreur en route vers le vendeur',
+        IN_TRANSIT: 'Colis en route', AT_AGENCY: 'Déposé à l’agence', AT_DESTINATION_HUB: 'Arrivé dans votre ville', LAST_MILE_ASSIGNED: 'Livreur local assigné',
+        OUT_FOR_DELIVERY: 'En cours de livraison', DELIVERED: 'Livré', SETTLED: 'Terminé', DISPUTED: 'Litige en cours', REFUNDED: 'Remboursé',
+        CANCELLED: 'Annulé', EXPIRED: 'Lien expiré' }
+    },
+    en: {
+      tagline: 'Secure payment & delivery', loading: 'Loading…', verified: '🏅 Verified seller (ID checked)',
+      unverified: 'Unverified seller', item: 'Item', delivery: 'Delivery', agencyFee: 'Agency fee',
+      totalEscrow: 'Total to lock in escrow', totalCod: 'Total to pay the rider in cash',
+      codeTitle: 'Your secret release code', codeWarning: '⚠️ Only give this code to the rider after inspecting the parcel.',
+      otherDevice: 'The release code is only shown on the phone that made the payment.',
+      payWith: 'MTN MoMo or Orange Money number', pay: (t) => `🔒 Pay ${t} into escrow`,
+      escrowExplainer: 'Your money stays locked with BayamSafe. The seller is only paid when you give the rider the code after checking the parcel.',
+      approveOnPhone: '📲 Approve the payment on your phone (enter your PIN).',
+      ussd: (c) => `If nothing shows up, dial ${c} to see pending payments.`,
+      simulate: 'Test mode: simulate approval', codInfo: '💵 You pay the rider in cash after inspecting the parcel, then give them the code above.',
+      deliveryPoint: '📍 Delivery point', useGps: '📍 Use my current location', saveDelivery: 'Save address',
+      addressPh: 'Neighbourhood / address', landmarkPh: 'Landmark: blue gate opposite pharmacy…', saved: '✅ Saved',
+      voiceTitle: '🎙️ Voice directions (15 s max)', record: 'Record', stop: 'Stop', voiceSaved: '✅ Voice note sent to the rider',
+      timeline: 'Tracking', reportProblem: '⚠️ Report a problem with the parcel', disputePrompt: 'Describe the problem:',
+      disputed: 'Dispute opened. The money stays locked until a decision.', invalidLink: 'Invalid or expired link. Ask the seller for a new one.',
+      footer: 'BayamSafe · Escrow for social commerce in Cameroon', gpsFix: (a) => `Location fixed (±${a} m)`,
+      gpsMoved: 'Marker moved', gpsFail: 'Location unavailable: drag the marker on the map.', micFail: 'Microphone not available.',
+      operator: { MTN: 'MTN Mobile Money', ORANGE: 'Orange Money' }, network: 'Network error, please retry.',
+      status: { PENDING_PAYMENT: 'Waiting for payment', AWAITING_RIDER: 'Paid · finding a rider', RIDER_ASSIGNED: 'Rider heading to seller',
+        IN_TRANSIT: 'Parcel on the way', AT_AGENCY: 'Dropped at agency', AT_DESTINATION_HUB: 'Arrived in your city', LAST_MILE_ASSIGNED: 'Local rider assigned',
+        OUT_FOR_DELIVERY: 'Out for delivery', DELIVERED: 'Delivered', SETTLED: 'Completed', DISPUTED: 'Under dispute', REFUNDED: 'Refunded',
+        CANCELLED: 'Cancelled', EXPIRED: 'Link expired' }
     }
+  };
 
-    // 2. Leaflet GPS Pin-Drop Setup
-    function initMap() {
-      map = L.map('mapPicker').setView([currentCoords.lat, currentCoords.lng], 14);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
-      }).addTo(map);
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+  };
+  let lang = store.get('bs_lang') || ((navigator.language || 'fr').startsWith('en') ? 'en' : 'fr');
+  const T = () => I18N[lang];
 
-      marker = L.marker([currentCoords.lat, currentCoords.lng], { draggable: true }).addTo(map);
-      marker.on('dragend', function () {
-        const pos = marker.getLatLng();
-        updateCoords(pos.lat, pos.lng, 'Marqueur Déplacé');
-      });
+  const params = new URLSearchParams(location.hash.slice(1));
+  const orderId = params.get('o');
+  const token = params.get('t');
+  const sessionKey = `bs_session_${orderId}`;
+  let view = null, health = null, pollTimer = null, map = null, marker = null, coords = null;
 
-      updateRouteLink(currentCoords.lat, currentCoords.lng);
-    }
+  const money = (n) => `${Number(n).toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US')} FCFA`;
+  const show = (id, on) => $(id).classList.toggle('hidden', !on);
+  const showError = (msg) => { $('error').textContent = msg; show('error', !!msg); };
 
-    function updateCoords(lat, lng, label) {
-      currentCoords = { lat, lng };
-      document.getElementById('gpsAccuracy').innerText = label;
-      updateRouteLink(lat, lng);
-    }
+  async function api(path, opts = {}) {
+    const headers = Object.assign({ 'X-Buyer-Token': token || '' }, opts.headers || {});
+    const session = store.get(sessionKey);
+    if (session) headers['X-Buyer-Session'] = session;
+    if (opts.json !== undefined) { headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
+    const res = await fetch(path, { method: opts.method || 'GET', headers, body: opts.body });
+    const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.message || T().network), { status: res.status });
+    return data;
+  }
 
-    function updateRouteLink(lat, lng) {
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-      document.getElementById('riderNavBtn').href = url;
-    }
-
-    function acquireExactGPS() {
-      const btn = document.getElementById('btnGetGPS');
-      if (!navigator.geolocation) {
-        alert("La géolocalisation n'est pas supportée par votre appareil.");
-        return;
-      }
-      btn.innerText = "Recherche satellite en cours...";
-
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const acc = Math.round(pos.coords.accuracy);
-
-          map.setView([lat, lng], 16);
-          marker.setLatLng([lat, lng]);
-          updateCoords(lat, lng, `Fixé (±${acc}m)`);
-          btn.innerHTML = `<i class="fa-solid fa-check text-emerald-600"></i> <span>Position capturée (±${acc}m)</span>`;
-        },
-        () => {
-          alert("Impossible d'obtenir la position. Vous pouvez déplacer le marqueur sur la carte.");
-          btn.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> <span>Réessayer le GPS</span>`;
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-      );
-    }
-
-    function selectOperator(op) {
-      const mtnBtn = document.getElementById('btnOperatorMTN');
-      const oraBtn = document.getElementById('btnOperatorOrange');
-      if (op === 'MTN') {
-        mtnBtn.className = "border-2 border-yellow-400 bg-yellow-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-        oraBtn.className = "border-2 border-slate-200 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-      } else {
-        oraBtn.className = "border-2 border-orange-500 bg-orange-50/50 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-        mtnBtn.className = "border-2 border-slate-200 rounded-2xl p-3 flex flex-col items-center gap-1 transition";
-      }
-    }
-
-    // Load Order from ?code=...
-    async function loadOrder() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code') || 'BS-DLA-80398';
-
-      try {
-        const res = await fetch(`/api/orders/${code}`);
-        const data = await res.json();
-        if (data.success && data.order) {
-          currentOrder = data.order;
-          renderOrder(data.order);
-        }
-      } catch (err) {
-        console.error("Erreur de chargement:", err);
-      }
-    }
-
-    function renderOrder(order) {
-      document.getElementById('orderCodeDisplay').innerText = order.trackingCode;
-      document.getElementById('itemTitleDisplay').innerText = order.itemTitle;
-      document.getElementById('merchantNameDisplay').innerText = order.merchantName;
-      document.getElementById('itemPriceDisplay').innerText = order.itemPrice.toLocaleString() + " FCFA";
-      document.getElementById('deliveryFeeDisplay').innerText = order.deliveryFee.toLocaleString() + " FCFA";
-      document.getElementById('totalAmountDisplay').innerText = order.totalAmount.toLocaleString() + " FCFA";
-
-      if (order.status === 'SEARCHING_RIDER' || order.status === 'ASSIGNED' || order.status === 'IN_TRANSIT') {
-        document.getElementById('paymentSelectionSection').classList.add('hidden');
-        document.getElementById('escrowLockedSection').classList.remove('hidden');
-        document.getElementById('orderStatusBadge').className = "bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2.5 py-0.5 rounded-full";
-        document.getElementById('orderStatusBadge').innerText = "Séquestre Verrouillé";
-        if (order.rawReleaseCodeForTesting) {
-          document.getElementById('releaseCodeDisplay').innerText = order.rawReleaseCodeForTesting;
-        }
-      }
-    }
-
-    async function triggerPayment() {
-      if (!currentOrder) return;
-      const btn = document.getElementById('btnPay');
-      btn.disabled = true;
-      btn.innerText = "Simulation de validation USSD...";
-
-      try {
-        const res = await fetch(`/api/orders/${currentOrder.trackingCode}/simulate-payment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ buyerPhone: '+237699887766' })
-        });
-        const data = await res.json();
-        if (data.success) {
-          currentOrder = data.order;
-          document.getElementById('releaseCodeDisplay').innerText = data.secretReleaseCodeForBuyer;
-          renderOrder(data.order);
-        }
-      } catch (err) {
-        alert("Erreur réseau");
-      } finally {
-        btn.disabled = false;
-        btn.innerText = "Bloquer les Fonds en Séquestre";
-      }
-    }
-
-    window.addEventListener('load', () => {
-      initMap();
-      loadOrder();
+  function applyI18n() {
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      const v = T()[el.dataset.i18n];
+      if (typeof v === 'string') el.textContent = v;
     });
-  </script>
+    $('langBtn').textContent = lang === 'fr' ? 'EN' : 'FR';
+    $('addressInput').placeholder = T().addressPh;
+    $('landmarkInput').placeholder = T().landmarkPh;
+    if (view) render();
+  }
+
+  function detectOperator(raw) {
+    let d = String(raw).replace(/\D/g, '');
+    if (d.startsWith('237') && d.length === 12) d = d.slice(3);
+    if (!/^6\d{8}$/.test(d)) return null;
+    if (/^67|^65[0-4]|^68[0-4]/.test(d)) return 'MTN';
+    if (/^69|^65[5-9]/.test(d)) return 'ORANGE';
+    return '';
+  }
+
+  function render() {
+    const v = view, t = T();
+    $('merchantName').textContent = v.merchantName;
+    show('verifiedBadge', v.merchantVerified);
+    show('unverifiedBadge', !v.merchantVerified);
+    $('trackingCode').textContent = v.trackingCode;
+    $('itemTitle').textContent = v.itemTitle;
+    $('statusBadge').textContent = t.status[v.status] || v.status;
+    $('itemPrice').textContent = money(v.itemPrice);
+    $('deliveryFee').textContent = money(v.deliveryFee);
+    show('agencyRow', v.agencyFee > 0);
+    $('agencyFee').textContent = money(v.agencyFee);
+    show('routeRow', !!v.agency);
+    if (v.agency) $('routeRow').textContent = `🚌 ${v.agency.name} ${v.agency.city} → ${v.destinationCity}${v.waybillNumber ? ' · ' + v.waybillNumber : ''}`;
+    $('totalLabel').textContent = v.paymentMode === 'COD' ? t.totalCod : t.totalEscrow;
+    $('total').textContent = money(v.total);
+
+    show('codeSection', !!v.releaseCode);
+    $('releaseCode').textContent = v.releaseCode || '';
+    show('otherDevice', v.releaseCodeOnOtherDevice);
+
+    show('paySection', v.can.pay && !v.payment.pending);
+    show('pendingSection', v.can.pay && v.payment.pending);
+    show('simulateBtn', health && health.payments === 'simulated');
+    $('payBtn').textContent = t.pay(money(v.total));
+    show('codInfo', v.paymentMode === 'COD' && !!v.releaseCode);
+
+    show('deliverySection', v.can.editDelivery);
+    if (document.activeElement !== $('addressInput')) $('addressInput').value = v.dropoffAddress || '';
+    if (document.activeElement !== $('landmarkInput')) $('landmarkInput').value = v.landmark || '';
+    if (v.hasVoiceNote && !$('voiceStatus').textContent) $('voiceStatus').textContent = t.voiceSaved;
+    if (v.can.editDelivery) initMap(v.dropoffLocation);
+
+    show('disputeBtn', v.can.dispute);
+    const ol = $('timeline');
+    ol.replaceChildren(...v.history.map((h) => {
+      const li = document.createElement('li');
+      li.textContent = `${new Date(h.at).toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-GB', { dateStyle: 'short', timeStyle: 'short' })} · ${t.status[h.status] || h.status}`;
+      return li;
+    }).reverse());
+
+    clearTimeout(pollTimer);
+    const active = !['SETTLED', 'REFUNDED', 'CANCELLED', 'EXPIRED'].includes(v.status);
+    if (active) pollTimer = setTimeout(load, v.payment.pending ? 4000 : 20000);
+  }
+
+  async function load() {
+    try {
+      view = await api(`/api/checkout/${encodeURIComponent(orderId)}`);
+      show('loading', false); show('content', true); showError('');
+      render();
+    } catch (e) {
+      show('loading', false);
+      if (e.status === 404) { showError(T().invalidLink); show('content', false); }
+      else { showError(e.message); pollTimer = setTimeout(load, 8000); }
+    }
+  }
+
+  function initMap(loc) {
+    if (map || typeof L === 'undefined') return;
+    const start = loc || { lat: 4.0511, lng: 9.7085 };
+    map = L.map('map').setView([start.lat, start.lng], loc ? 16 : 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
+    marker = L.marker([start.lat, start.lng], { draggable: true }).addTo(map);
+    if (loc) coords = loc;
+    marker.on('dragend', () => { const p = marker.getLatLng(); coords = { lat: p.lat, lng: p.lng }; $('gpsStatus').textContent = T().gpsMoved; });
+  }
+
+  $('gpsBtn').onclick = () => {
+    if (!navigator.geolocation) return ($('gpsStatus').textContent = T().gpsFail);
+    navigator.geolocation.getCurrentPosition((pos) => {
+      coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      map.setView([coords.lat, coords.lng], 17); marker.setLatLng([coords.lat, coords.lng]);
+      $('gpsStatus').textContent = T().gpsFix(Math.round(pos.coords.accuracy));
+    }, () => { $('gpsStatus').textContent = T().gpsFail; }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  };
+
+  $('saveDeliveryBtn').onclick = async () => {
+    try {
+      const body = { dropoffAddress: $('addressInput').value, landmark: $('landmarkInput').value };
+      if (coords) body.dropoffLocation = coords;
+      view = await api(`/api/checkout/${encodeURIComponent(orderId)}/delivery`, { method: 'PATCH', json: body });
+      $('gpsStatus').textContent = T().saved; render();
+    } catch (e) { showError(e.message); }
+  };
+
+  $('payerPhone').oninput = () => {
+    const op = detectOperator($('payerPhone').value);
+    $('operatorHint').textContent = op ? T().operator[op] : '';
+  };
+
+  $('payBtn').onclick = async () => {
+    $('payBtn').disabled = true; showError('');
+    try {
+      const res = await api(`/api/checkout/${encodeURIComponent(orderId)}/pay`, { method: 'POST', json: { payerPhone: $('payerPhone').value } });
+      store.set(sessionKey, res.sessionToken);
+      $('ussdHint').textContent = res.ussdCode ? T().ussd(res.ussdCode) : '';
+      await load();
+    } catch (e) { showError(e.message); }
+    finally { $('payBtn').disabled = false; }
+  };
+
+  $('simulateBtn').onclick = async () => {
+    try { await api(`/api/dev/checkout/${encodeURIComponent(orderId)}/approve`, { method: 'POST' }); await load(); }
+    catch (e) { showError(e.message); }
+  };
+
+  $('disputeBtn').onclick = async () => {
+    const reason = prompt(T().disputePrompt);
+    if (!reason) return;
+    try { view = await api(`/api/checkout/${encodeURIComponent(orderId)}/dispute`, { method: 'POST', json: { reason } }); alert(T().disputed); render(); }
+    catch (e) { showError(e.message); }
+  };
+
+  // Voice note (max 15 s)
+  let recorder = null, chunks = [], seconds = 0, timer = null;
+  $('recordBtn').onclick = async () => {
+    if (recorder && recorder.state === 'recording') return recorder.stop();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const type = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+      recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      chunks = []; seconds = 0;
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = async () => {
+        clearInterval(timer); stream.getTracks().forEach((tr) => tr.stop());
+        $('recordBtn').textContent = T().record; $('recordBtn').classList.remove('pulse');
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        $('voicePlayback').src = URL.createObjectURL(blob); show('voicePlayback', true);
+        try {
+          await api(`/api/checkout/${encodeURIComponent(orderId)}/voice`, { method: 'PUT', body: blob, headers: { 'Content-Type': blob.type.split(';')[0] } });
+          $('voiceStatus').textContent = T().voiceSaved;
+        } catch (e) { $('voiceStatus').textContent = e.message; }
+      };
+      recorder.start();
+      $('recordBtn').textContent = T().stop; $('recordBtn').classList.add('pulse');
+      timer = setInterval(() => { seconds++; $('voiceTimer').textContent = `${seconds}s / 15s`; if (seconds >= 15) recorder.stop(); }, 1000);
+    } catch { $('voiceStatus').textContent = T().micFail; }
+  };
+
+  $('langBtn').onclick = () => { lang = lang === 'fr' ? 'en' : 'fr'; store.set('bs_lang', lang); applyI18n(); };
+
+  applyI18n();
+  if (!orderId || !token) { show('loading', false); showError(T().invalidLink); return; }
+  fetch('/api/health').then((r) => r.json()).then((h) => { health = h; if (view) render(); }).catch(() => {});
+  load();
+})();
+</script>
 </body>
 </html>
