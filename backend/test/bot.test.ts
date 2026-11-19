@@ -189,13 +189,19 @@ describe('telegram bot', () => {
     await h.text(M, 'Sac à main cuir');
     await h.text(M, '15 000');
     await h.text(M, '1000');
+    await h.text(M, '671 23 45 67'); // the seller's own number: refused right away
+    assert.match(h.lastText(), /votre propre numéro/);
     await h.text(M, '699 11 22 33');
     await h.text(M, 'Akwa, face Total');
     await h.press(M, 'ord:mode:ESCROW');
+    await h.press(M, 'ord:edit_buyer'); // fix the buyer number from the summary
+    await h.text(M, '677 88 99 00');
+    assert.match(h.lastText(), /677 88 99 00/);
     await h.press(M, 'ord:confirm');
     assert.match(h.lastText(), /checkout\.html#o=/);
     const [order] = await h.app.orders.listForMerchant(merchant.id);
     assert.equal(order.merchantVerified, true);
+    assert.equal(order.buyerPhone, '+237677889900');
 
     // Buyer pays; rider accepts and delivers with the code.
     const rider = await makeRider(h.app);

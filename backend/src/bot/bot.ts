@@ -3,7 +3,7 @@ import { App } from '../app.js';
 import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError } from '../domain/errors.js';
 import { googleMapsRoute } from '../domain/geo.js';
-import { isValidCameroonPhone } from '../domain/phone.js';
+import { isValidCameroonPhone, normalizeCameroonPhone } from '../domain/phone.js';
 import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../domain/types.js';
 import { DomainEvent } from '../services/events.js';
 import { esc, t } from '../i18n/locales.js';
@@ -23,6 +23,8 @@ interface Draft {
   pickup?: string;
   pickupLocation?: GeoPoint;
   mode?: PaymentMode;
+  /** Set when the seller is correcting one answer from the summary. */
+  backToSummary?: boolean;
 }
 
 type Flow =
@@ -394,9 +396,18 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         mode: d.mode === 'COD' ? ctx.s.btnCod : ctx.s.btnEscrow,
         route: agency ? `${agency.name} ${agency.city} (${agency.terminalName}) → ${d.dest}` : undefined
       }),
-      { reply_markup: new InlineKeyboard().text(ctx.s.btnConfirm, 'ord:confirm').text(ctx.s.btnAbort, 'ord:abort') }
+      { reply_markup: new InlineKeyboard().text(ctx.s.btnConfirm, 'ord:confirm').text(ctx.s.btnAbort, 'ord:abort').row().text(ctx.s.btnEditBuyer, 'ord:edit_buyer') }
     );
   };
+
+  bot.callbackQuery('ord:edit_buyer', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'confirm') return;
+    f.d.backToSummary = true;
+    f.step = 'buyer';
+    await html(ctx, ctx.s.askBuyerPhone);
+  }));
 
   bot.callbackQuery('ord:abort', guard(async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -686,7 +697,13 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         }
         if (f.step === 'buyer') {
           if (!isValidCameroonPhone(text)) return html(ctx, s.askBuyerPhone);
+          // The seller can't be their own buyer: say so now, not after the whole form.
+          if (ctx.user && normalizeCameroonPhone(text) === ctx.user.phone) return html(ctx, s.buyerIsYou);
           d.buyer = text;
+          if (d.backToSummary) {
+            d.backToSummary = false;
+            return showSummary(ctx, d);
+          }
           f.step = 'pickup';
           return html(ctx, s.askPickup);
         }
