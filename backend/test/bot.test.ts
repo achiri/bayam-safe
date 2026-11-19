@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import type { Update, UserFromGetMe } from 'grammy/types';
 import { AddressInfo } from 'node:net';
 import { createServer } from '../src/api/server.js';
+import { assertGeoPoint } from '../src/domain/geo.js';
 import { createBot } from '../src/bot/bot.js';
 import { telegramWebhook } from '../src/bot/webhook.js';
 import { makeApp, makeRider, releaseCode, tick } from './helpers.js';
@@ -69,9 +70,11 @@ async function signUpMerchant(h: ReturnType<typeof harness>, id: number) {
   await h.text(id, '1234 5678 9');
   await h.photo(id, 'file-shop-00001');
   assert.match(h.lastText(), /Étape 8\/8/);
-  await h.location(id, 48.85, 2.35); // Paris: refused
-  assert.match(h.lastText(), /Cameroon/);
-  await h.location(id, 4.0511, 9.7085);
+  await h.location(id, 48.85, 2.35); // Paris: refused with a clear French message
+  assert.match(h.lastText(), /48\.8500, 2\.3500.*hors du Cameroun/s);
+  await h.text(id, 'somewhere near the market'); // not a location: asked again, with the alternatives
+  assert.match(h.lastText(), /lien Google Maps/);
+  await h.text(id, 'https://www.google.com/maps/place/Akwa/@4.0511,9.7085,17z'); // pasted link works (computer users)
   assert.match(h.lastText(), /Vérifiez avant d’envoyer/);
   assert.match(h.lastText(), /&lt;b&gt;Mode&lt;\/b&gt;/); // user text is escaped
   await h.press(id, 'ob:submit');
@@ -109,6 +112,29 @@ describe('telegram webhook over HTTP', () => {
 });
 
 describe('telegram bot', () => {
+  it('accepts plain typed coordinates for the shop location, and any location when the Cameroon check is off', async () => {
+    const h = harness();
+    await h.contact(910, { phone_number: '671000910', first_name: 'Awa', user_id: 910 });
+    for (const t of ['Chez Awa', 'Douala']) await h.text(910, t);
+    for (const f of ['s-0000000001', 'f-0000000001', 'b-0000000001']) await h.photo(910, f);
+    await h.text(910, '123456789');
+    await h.photo(910, 'shop-00000001');
+    await h.text(910, '4.0511, 9.7085');
+    assert.match(h.lastText(), /Vérifiez avant d’envoyer/);
+    assert.deepEqual((await h.app.store.getUserByTelegram(910))!.draft!.data.shopLocation, { lat: 4.0511, lng: 9.7085 });
+
+    const abroad = makeApp({ env: { RESTRICT_TO_CAMEROON: 'false' } });
+    try {
+      const u = await abroad.users.registerFromContact(911, { phone_number: '671000911', first_name: 'B', user_id: 911 });
+      await abroad.users.startDraft(911, 'merchant', 'shopLocation');
+      assert.equal(u.telegramId, 911);
+      assert.deepEqual(assertGeoPoint({ lat: 48.85, lng: 2.35 }), { lat: 48.85, lng: 2.35 });
+    } finally {
+      makeApp(); // restore the default Cameroon-only check for other tests
+    }
+    assert.throws(() => assertGeoPoint({ lat: 48.85, lng: 2.35 }));
+  });
+
   it('seller sign-up collects every document in the bot, survives interruptions, then sells', async () => {
     const h = harness();
     const M = 501;

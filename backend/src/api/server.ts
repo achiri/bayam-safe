@@ -46,7 +46,9 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
   const { config, orders, users, riders, store, gateway } = appCtx;
   const app = express();
   app.disable('x-powered-by');
-  if (config.NODE_ENV === 'production') app.set('trust proxy', 1);
+  // Behind Render's (or any) reverse proxy, trust one hop so req.ip is the visitor, not the proxy;
+  // otherwise every visitor shares one rate-limit bucket.
+  if (config.NODE_ENV === 'production' || process.env.RENDER) app.set('trust proxy', 1);
 
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');

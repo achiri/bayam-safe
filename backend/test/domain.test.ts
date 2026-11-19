@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { loadConfig } from '../src/config.js';
 import { computePricing, refundPlan, settlementPlan } from '../src/domain/money.js';
 import { canTransition, transition } from '../src/domain/order-state.js';
+import { parseCoordinates } from '../src/domain/geo.js';
 import { detectOperator, maskPhone, normalizeCameroonPhone } from '../src/domain/phone.js';
 import { Secrets, newTrackingCode } from '../src/domain/secrets.js';
 import { Order } from '../src/domain/types.js';
@@ -105,6 +106,18 @@ describe('HS256 webhook signatures', () => {
     assert.equal(verifyHs256(tok.slice(0, -2) + 'xx', 'key'), null);
     assert.equal(verifyHs256(signHs256({ exp: 1 }, 'key'), 'key'), null);
     assert.equal(verifyHs256('garbage', 'key'), null);
+  });
+});
+
+describe('coordinates typed or pasted as text', () => {
+  it('reads plain pairs and common Google Maps link shapes', () => {
+    const at = { lat: 4.0511, lng: 9.7085 };
+    for (const t of ['4.0511, 9.7085', '4.0511 9.7085', '4.0511;9.7085',
+      'https://www.google.com/maps/place/Akwa/@4.0511,9.7085,17z', 'https://maps.google.com/?q=4.0511,9.7085',
+      'https://www.google.com/maps/dir/?api=1&destination=4.0511%2C9.7085', 'https://www.google.com/maps/place/4.0511,9.7085']) {
+      assert.deepEqual(parseCoordinates(t), at, t);
+    }
+    for (const t of ['Akwa market', '12', 'https://maps.app.goo.gl/AbCdEf', '200.1, 9.7']) assert.equal(parseCoordinates(t), undefined, t);
   });
 });
 

@@ -316,7 +316,7 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
         cniBackFileId: 'f-back', shopPhotoFileId: 'f-shop', shopLocation: { lat: 4.05, lng: 9.7 }
       };
       await assert.rejects(app.users.submitMerchantProfile(fresh1.telegramId, { ...profile, shopPhotoFileId: undefined }), /shop photo/);
-      await rejects(app.users.submitMerchantProfile(fresh1.telegramId, { ...profile, shopLocation: { lat: 48.8, lng: 2.3 } }), 'INVALID');
+      await rejects(app.users.submitMerchantProfile(fresh1.telegramId, { ...profile, shopLocation: { lat: 48.8, lng: 2.3 } }), 'OUTSIDE_CAMEROON');
       const pending = await app.users.submitMerchantProfile(fresh1.telegramId, profile);
       assert.equal(pending.kycStatus, 'PENDING');
       assert.equal(pending.cniNumber, '123456789');

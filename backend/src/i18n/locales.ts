@@ -116,8 +116,14 @@ const fr = {
   ask_cniNumber: '🔢 Numéro de la CNI, tel qu’il est écrit sur la carte ?',
   ask_shopPhoto: '🏬 Une photo de votre <b>boutique ou de votre stock</b> : devanture, étal, ou l’endroit où vous préparez les colis.',
   ask_shopLocation:
-    '📍 <b>Position exacte de la boutique.</b>\nSi vous y êtes, appuyez sur le bouton ci-dessous. Sinon : 📎 → Position, puis déplacez l’épingle sur la boutique.',
+    '📍 <b>Position exacte de la boutique.</b>\n' +
+    '• Sur le téléphone, à la boutique : appuyez sur le bouton ci-dessous.\n' +
+    '• Ailleurs : 📎 → Position, puis déplacez l’épingle sur la boutique.\n' +
+    '• Sur ordinateur : collez un lien Google Maps de la boutique, ou ses coordonnées (ex : <code>4.0511, 9.7085</code>).',
   btnSendLocation: '📍 Envoyer ma position actuelle',
+  badLocation: (lat: number, lng: number) =>
+    `⚠️ La position reçue (<code>${lat.toFixed(4)}, ${lng.toFixed(4)}</code>) est hors du Cameroun.\n` +
+    'Envoyez la position de la boutique : 📎 → Position et déplacez l’épingle, ou collez un lien Google Maps, ou des coordonnées comme <code>4.0511, 9.7085</code>.',
   ask_legalName: '🪪 Vos <b>prénom et nom</b>, exactement comme sur votre CNI ?',
   btnUseName: (n: string) => `Utiliser « ${n} »`,
   ask_vehicleType: '🏍️ Avec quoi livrez-vous ?',
@@ -128,7 +134,7 @@ const fr = {
   ask_vehiclePhoto: '📸 Photo de votre véhicule, <b>plaque bien lisible</b>.',
   ask_riderCity: '🏙️ Dans quelle ville livrez-vous ?',
   needPhoto: '📸 Pour cette étape, envoyez une photo (📎 → Caméra ou Galerie).',
-  needLocation: '📍 Pour cette étape, envoyez une position (bouton ci-dessous, ou 📎 → Position).',
+  needLocation: '📍 Pour cette étape, envoyez une position (bouton ci-dessous, ou 📎 → Position), ou collez un lien Google Maps / des coordonnées comme <code>4.0511, 9.7085</code>.',
   needText: '✍️ Pour cette étape, répondez par un message texte.',
   badShopName: '⚠️ Nom trop court.',
   badName: '⚠️ Entrez prénom ET nom, comme sur la CNI.',
@@ -302,8 +308,14 @@ const en: Strings = {
   ask_cniNumber: '🔢 ID card number, as written on the card?',
   ask_shopPhoto: '🏬 A photo of your <b>shop or stock</b>: shopfront, stall, or where you pack parcels.',
   ask_shopLocation:
-    '📍 <b>Exact shop location.</b>\nIf you are there, tap the button below. Otherwise: 📎 → Location, then drag the pin onto the shop.',
+    '📍 <b>Exact shop location.</b>\n' +
+    '• On your phone, at the shop: tap the button below.\n' +
+    '• Elsewhere: 📎 → Location, then drag the pin onto the shop.\n' +
+    '• On a computer: paste a Google Maps link to the shop, or its coordinates (e.g. <code>4.0511, 9.7085</code>).',
   btnSendLocation: '📍 Send my current location',
+  badLocation: (lat, lng) =>
+    `⚠️ The location received (<code>${lat.toFixed(4)}, ${lng.toFixed(4)}</code>) is outside Cameroon.\n` +
+    'Send the shop’s location: 📎 → Location and drag the pin, or paste a Google Maps link, or coordinates like <code>4.0511, 9.7085</code>.',
   ask_legalName: '🪪 Your <b>first and last name</b>, exactly as on your ID card?',
   btnUseName: (n) => `Use “${n}”`,
   ask_vehicleType: '🏍️ What do you deliver with?',
@@ -314,7 +326,7 @@ const en: Strings = {
   ask_vehiclePhoto: '📸 Photo of your vehicle with the <b>plate clearly readable</b>.',
   ask_riderCity: '🏙️ Which city do you deliver in?',
   needPhoto: '📸 For this step, send a photo (📎 → Camera or Gallery).',
-  needLocation: '📍 For this step, send a location (button below, or 📎 → Location).',
+  needLocation: '📍 For this step, send a location (button below, or 📎 → Location), or paste a Google Maps link / coordinates like <code>4.0511, 9.7085</code>.',
   needText: '✍️ For this step, reply with a text message.',
   badShopName: '⚠️ Name too short.',
   badName: '⚠️ Enter first AND last name, as on the ID card.',

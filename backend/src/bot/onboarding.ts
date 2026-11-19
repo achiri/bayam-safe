@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard, Keyboard } from 'grammy';
 import { App } from '../app.js';
 import { CITIES } from '../domain/agencies.js';
-import { assertGeoPoint } from '../domain/geo.js';
+import { OutsideCameroonError, assertGeoPoint, parseCoordinates } from '../domain/geo.js';
 import { GeoPoint, OnboardingDraft, User, VehicleType } from '../domain/types.js';
 import { normalizeIdNumber } from '../services/user.service.js';
 import type { BotContext } from './bot.js';
@@ -151,6 +151,9 @@ export function registerOnboarding(
     } else if (input === 'photo') {
       await html(ctx, ctx.s.needPhoto);
     } else if (input === 'location') {
+      // On a computer Telegram can't share a location, so a pasted map link or "lat, lng" works too.
+      const point = parseCoordinates(text);
+      if (point) return handleLocation(ctx, point);
       await html(ctx, ctx.s.needLocation, { reply_markup: new Keyboard().requestLocation(ctx.s.btnSendLocation).resized().oneTime() });
     } else {
       await ask(ctx, ctx.user!);
@@ -173,11 +176,17 @@ export function registerOnboarding(
       await ask(ctx, ctx.user!);
       return true;
     }
+    let point: GeoPoint;
     try {
-      await advance(ctx, assertGeoPoint(loc));
+      point = assertGeoPoint(loc);
     } catch (e) {
-      await html(ctx, `⚠️ ${(e as Error).message}`);
+      const p = e instanceof OutsideCameroonError ? e.point : loc;
+      await html(ctx, ctx.s.badLocation(p.lat, p.lng), {
+        reply_markup: new Keyboard().requestLocation(ctx.s.btnSendLocation).resized().oneTime()
+      });
+      return true;
     }
+    await advance(ctx, point);
     return true;
   }
 

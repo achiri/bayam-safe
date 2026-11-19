@@ -52,6 +52,8 @@ const schema = z.object({
   /** Unpaid orders expire after this many hours. */
   ORDER_PAYMENT_TTL_HOURS: z.coerce.number().positive().default(48),
   DISPATCH_RADIUS_KM: z.coerce.number().positive().default(8),
+  /** Reject GPS points outside Cameroon. Turn off on staging to test from abroad. */
+  RESTRICT_TO_CAMEROON: boolish.default(true),
   MAX_CODE_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
 
   SEED_DEMO_DATA: boolish.default(false)

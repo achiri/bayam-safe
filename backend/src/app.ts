@@ -1,5 +1,6 @@
 import { AppConfig } from './config.js';
 import { Secrets } from './domain/secrets.js';
+import { setCameroonGeofence } from './domain/geo.js';
 import { CampayGateway } from './payments/campay.js';
 import { PaymentGateway } from './payments/gateway.js';
 import { SimulatedGateway } from './payments/simulated.js';
@@ -46,6 +47,7 @@ export function createStore(config: AppConfig): Store {
 }
 
 export function createApp(config: AppConfig, overrides: { store?: Store; gateway?: PaymentGateway; files?: FileFetcher } = {}): App {
+  setCameroonGeofence(config.RESTRICT_TO_CAMEROON);
   const store = overrides.store ?? createStore(config);
   const gateway = overrides.gateway ?? createGateway(config);
   const events = new EventBus();
