@@ -6,6 +6,7 @@ import { safeEqual } from '../domain/secrets.js';
 import { LedgerAccount, Order, OrderStatus, User } from '../domain/types.js';
 import { SimulatedGateway } from '../payments/simulated.js';
 import { rateLimit } from './rate-limit.js';
+import { createAdminSession, verifyAdminSession, verifyPassword } from './admin-auth.js';
 
 type Async = (req: Request, res: Response) => Promise<unknown>;
 const h =
@@ -199,11 +200,31 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
   }
 
   // ---------------------------------------------------------------- admin
+  // Username/password login → short-lived signed session token. Heavily rate limited.
+  app.post(
+    '/api/admin/login',
+    rateLimit({ windowMs: 15 * 60_000, max: 8 }),
+    json,
+    h(async (req, res) => {
+      if (!config.ADMIN_PASSWORD_HASH) throw new AppError('LOGIN_DISABLED', 'Password login is not set up on this server (ADMIN_PASSWORD_HASH).', 503);
+      const username = String(req.body?.username ?? '').trim();
+      const password = String(req.body?.password ?? '');
+      const userOk = safeEqual(username.toLowerCase(), config.ADMIN_USERNAME.toLowerCase());
+      const passOk = verifyPassword(password, config.ADMIN_PASSWORD_HASH); // always computed: same timing for bad usernames
+      if (!userOk || !passOk) {
+        console.warn(`[admin] failed login for "${username.slice(0, 60)}" from ${req.ip}`);
+        throw new AppError('BAD_LOGIN', 'Wrong username or password.', 401);
+      }
+      res.json(createAdminSession(config.APP_SECRET, config.ADMIN_USERNAME));
+    })
+  );
+
   const admin = express.Router();
   admin.use((req, _res, next) => {
-    const key = config.ADMIN_API_KEY;
     const presented = (req.header('authorization') ?? '').replace(/^Bearer\s+/i, '');
-    if (!key || !presented || !safeEqual(presented, key)) return next(forbidden('Admin key required'));
+    const keyOk = !!config.ADMIN_API_KEY && !!presented && safeEqual(presented, config.ADMIN_API_KEY);
+    const sessionOk = !!presented && !!verifyAdminSession(config.APP_SECRET, presented);
+    if (!keyOk && !sessionOk) return next(forbidden('Admin login required'));
     next();
   });
   admin.use(json);

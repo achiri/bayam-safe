@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test';
 import { createServer } from '../src/api/server.js';
 import { CampayGateway } from '../src/payments/campay.js';
 import { signHs256 } from '../src/payments/jwt.js';
+import { createAdminSession, hashPassword, verifyAdminSession, verifyPassword } from '../src/api/admin-auth.js';
 import { intraInput, makeApp, makeMerchant, makeRider, TestApp } from './helpers.js';
 
 const ADMIN = 'admin-key-admin-key-admin-key';
@@ -174,6 +175,45 @@ describe('HTTP API', () => {
     const r = await call('GET', '/api/nope');
     assert.equal(r.status, 404);
     assert.equal(r.body.error, 'NOT_FOUND');
+  });
+});
+
+describe('admin password login', () => {
+  it('logs in with username and password, issues an expiring session, and rejects bad credentials', async () => {
+    const hash = hashPassword('correct horse battery');
+    const app = makeApp({ env: { ADMIN_USERNAME: 'boss', ADMIN_PASSWORD_HASH: hash } });
+    const server = createServer(app, { webDir: path.resolve(__dirname, '../../web') }).listen(0);
+    await new Promise((r) => server.once('listening', r));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const login = (username: string, password: string) =>
+      fetch(base + '/api/admin/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password }) });
+    try {
+      assert.equal((await login('boss', 'wrong password')).status, 401);
+      assert.equal((await login('someone', 'correct horse battery')).status, 401);
+      const ok = await login('BOSS', 'correct horse battery');
+      assert.equal(ok.status, 200);
+      const { token, expiresAt } = await ok.json();
+      assert.ok(Date.parse(expiresAt) > Date.now());
+      const overview = await fetch(base + '/api/admin/overview', { headers: { authorization: `Bearer ${token}` } });
+      assert.equal(overview.status, 200);
+      const tampered = token.slice(0, -2) + (token.endsWith('aa') ? 'bb' : 'aa');
+      assert.equal((await fetch(base + '/api/admin/overview', { headers: { authorization: `Bearer ${tampered}` } })).status, 403);
+    } finally {
+      server.close();
+    }
+    const expired = createAdminSession('test-secret-test-secret-test-secret-1234', 'boss', 1000, Date.now() - 5000);
+    assert.equal(verifyAdminSession('test-secret-test-secret-test-secret-1234', expired.token), null);
+    assert.equal(verifyPassword('x', 'not-a-hash'), false);
+  });
+
+  it('refuses password login when no hash is configured', async () => {
+    const server = createServer(makeApp(), { webDir: path.resolve(__dirname, '../../web') }).listen(0);
+    await new Promise((r) => server.once('listening', r));
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/admin/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'anything-at-all' })
+    });
+    server.close();
+    assert.equal(res.status, 503);
   });
 });
 

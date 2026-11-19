@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Update, UserFromGetMe } from 'grammy/types';
+import { AddressInfo } from 'node:net';
+import { createServer } from '../src/api/server.js';
 import { createBot } from '../src/bot/bot.js';
+import { telegramWebhook } from '../src/bot/webhook.js';
 import { makeApp, makeRider, releaseCode, tick } from './helpers.js';
 
 const botInfo = {
@@ -73,6 +76,37 @@ async function signUpMerchant(h: ReturnType<typeof harness>, id: number) {
   assert.match(h.lastText(), /&lt;b&gt;Mode&lt;\/b&gt;/); // user text is escaped
   await h.press(id, 'ob:submit');
 }
+
+describe('telegram webhook over HTTP', () => {
+  it('parses the update, answers /start, rejects a wrong secret and survives a malformed update', async () => {
+    const app = makeApp();
+    const bot = createBot(app, 'test-token', { botInfo });
+    const sent: Array<{ method: string; payload: any }> = [];
+    bot.api.config.use(async (_prev, method, payload) => {
+      sent.push({ method, payload });
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 1, type: 'private' } } } as any;
+    });
+    const server = createServer(app, { mount: (http) => http.post('/api/webhooks/telegram', ...telegramWebhook(bot, 'hook-secret')) }).listen(0);
+    await new Promise((r) => server.once('listening', r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/webhooks/telegram`;
+    const post = (body: unknown, secret?: string) =>
+      fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...(secret ? { 'x-telegram-bot-api-secret-token': secret } : {}) }, body: JSON.stringify(body) });
+    try {
+      const start = {
+        update_id: 1,
+        message: { message_id: 1, date: 0, chat: { id: 77, type: 'private' }, from: { id: 77, is_bot: false, first_name: 'Awa' }, text: '/start', entities: [{ type: 'bot_command', offset: 0, length: 6 }] }
+      };
+      assert.equal((await post(start, 'wrong')).status, 401);
+      assert.equal((await post(start, 'hook-secret')).status, 200);
+      assert.ok(sent.some((s) => s.method === 'sendMessage' && s.payload.chat_id === 77 && /Bienvenue/.test(s.payload.text)));
+
+      assert.equal((await post({ nonsense: true }, 'hook-secret')).status, 200);
+      assert.equal((await post({ ...start, update_id: 2 }, 'hook-secret')).status, 200); // still alive
+    } finally {
+      server.close();
+    }
+  });
+});
 
 describe('telegram bot', () => {
   it('seller sign-up collects every document in the bot, survives interruptions, then sells', async () => {

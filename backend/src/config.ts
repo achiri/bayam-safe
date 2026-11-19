@@ -29,8 +29,11 @@ const schema = z.object({
 
   /** Secret used to encrypt release codes and hash access tokens. */
   APP_SECRET: z.string().min(32).optional(),
-  /** Bearer key for /api/admin endpoints. */
+  /** Bearer key for /api/admin endpoints (scripts, emergencies). */
   ADMIN_API_KEY: z.string().min(24).optional(),
+  /** Admin dashboard login. The password is stored only as a hash: `npm run admin:password`. */
+  ADMIN_USERNAME: z.string().min(3).max(60).default('admin'),
+  ADMIN_PASSWORD_HASH: z.string().startsWith('scrypt$').optional(),
   /** Telegram user ids allowed to use admin bot commands. */
   ADMIN_TELEGRAM_IDS: csvNumbers,
 

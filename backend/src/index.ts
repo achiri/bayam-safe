@@ -1,6 +1,6 @@
 import 'dotenv/config';
-import { webhookCallback } from 'grammy';
 import { createApp, startJobs } from './app.js';
+import { telegramWebhook } from './bot/webhook.js';
 import { createServer } from './api/server.js';
 import { createBot } from './bot/bot.js';
 import { loadConfig } from './config.js';
@@ -25,7 +25,7 @@ async function main() {
     publicConfig: () => ({ botUsername: bot?.isInited() ? bot.botInfo.username : undefined }),
     mount: (http) => {
       if (bot && config.TELEGRAM_USE_WEBHOOK) {
-        http.post('/api/webhooks/telegram', webhookCallback(bot, 'express', { secretToken: config.TELEGRAM_WEBHOOK_SECRET }));
+        http.post('/api/webhooks/telegram', ...telegramWebhook(bot, config.TELEGRAM_WEBHOOK_SECRET));
       }
     }
   });
@@ -68,6 +68,9 @@ async function main() {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
+
+// A stray async error in one request must not take the whole server down.
+process.on('unhandledRejection', (reason) => console.error('[process] unhandled rejection:', reason));
 
 main().catch((err) => {
   console.error(err instanceof Error ? err.message : err);

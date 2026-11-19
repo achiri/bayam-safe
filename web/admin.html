@@ -180,13 +180,24 @@ td.r, th.r { text-align: right; }
   <form id="loginForm">
     <div class="brand"><svg width="40" height="40" aria-hidden="true"><use href="#mark"></use></svg><div>BayamSafe<small>Poste de contrôle</small></div></div>
     <h1>Connexion admin</h1>
-    <div class="field">
+    <div id="pwFields" style="display:grid;gap:18px">
+      <div class="field">
+        <label for="userInput">Identifiant</label>
+        <input class="input" id="userInput" type="text" autocomplete="username" autocapitalize="none" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="passInput">Mot de passe</label>
+        <input class="input" id="passInput" type="password" autocomplete="current-password">
+      </div>
+    </div>
+    <div class="field" id="keyField" hidden>
       <label for="keyInput">Clé admin (ADMIN_API_KEY)</label>
-      <input class="input mono" id="keyInput" type="password" autocomplete="current-password" required>
+      <input class="input mono" id="keyInput" type="password" autocomplete="off">
     </div>
     <div class="err" id="loginErr" role="alert"></div>
-    <button class="btn primary" type="submit">Entrer</button>
-    <p class="sub">La clé reste dans cet onglet uniquement et disparaît à sa fermeture.</p>
+    <button class="btn primary" type="submit">Se connecter</button>
+    <button class="btn small" type="button" id="modeBtn">Utiliser la clé API à la place</button>
+    <p class="sub">La session reste dans cet onglet uniquement et expire après 12 heures.</p>
   </form>
 </section>
 
@@ -290,11 +301,32 @@ td.r, th.r { text-align: right; }
     $('#loginErr').textContent = msg || '';
   }
   $('#logoutBtn').onclick = () => logout();
+  let useKey = false;
+  $('#modeBtn').onclick = () => {
+    useKey = !useKey;
+    $('#pwFields').hidden = useKey; $('#keyField').hidden = !useKey;
+    $('#modeBtn').textContent = useKey ? 'Utiliser identifiant et mot de passe' : 'Utiliser la clé API à la place';
+    $('#loginErr').textContent = '';
+  };
   $('#loginForm').onsubmit = async (e) => {
     e.preventDefault();
-    key = $('#keyInput').value.trim();
-    try { await api('/overview'); ss.set(key); boot(); }
-    catch (err) { if (err.message !== 'forbidden') $('#loginErr').textContent = err.message; }
+    $('#loginErr').textContent = '';
+    try {
+      if (useKey) {
+        key = $('#keyInput').value.trim();
+      } else {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: $('#userInput').value, password: $('#passInput').value })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { $('#loginErr').textContent = data.message || `Erreur ${res.status}`; return; }
+        key = data.token;
+        $('#passInput').value = '';
+      }
+      await api('/overview'); ss.set(key); boot();
+    } catch (err) { if (err.message !== 'forbidden') $('#loginErr').textContent = err.message; }
   };
 
   const views = { overview, verify, orders, live, riders, sellers, money };
