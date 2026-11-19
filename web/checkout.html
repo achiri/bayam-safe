@@ -69,8 +69,25 @@
           <div class="font-extrabold" id="riderName"></div>
           <div class="text-xs text-slate-300 font-mono" id="riderMeta"></div>
           <div class="text-[11px] text-slate-400" id="riderVerify"></div>
+          <a id="riderCall" class="hidden mt-1 inline-block text-xs font-bold text-emerald-300 underline" href="#"></a>
         </div>
       </section>
+
+      <section id="trackSection" class="hidden space-y-2 bg-slate-900 text-white rounded-2xl p-3">
+        <div class="flex justify-between items-center">
+          <span class="text-[11px] uppercase tracking-widest text-emerald-300 font-bold" data-i18n="trackTitle"></span>
+          <span class="text-[11px] text-slate-400" id="trackAge"></span>
+        </div>
+        <div id="nearBanner" class="hidden bg-amber-400 text-slate-900 text-xs font-extrabold rounded-xl p-2" data-i18n="nearBanner"></div>
+        <div id="trackMap" style="height:200px;border-radius:12px;z-index:0"></div>
+        <div class="text-sm font-bold" id="trackInfo"></div>
+      </section>
+
+      <section id="followSection" class="hidden bg-sky-50 border border-sky-200 rounded-2xl p-3 text-xs space-y-2">
+        <button id="followBtn" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-2.5 rounded-xl" data-i18n="followBtn"></button>
+        <p class="text-slate-600" data-i18n="followHint"></p>
+      </section>
+      <div id="followingNote" class="hidden text-xs text-sky-800 font-bold" data-i18n="following"></div>
       <section id="otherDevice" class="hidden bg-amber-50 border border-amber-300 rounded-2xl p-3 text-xs text-amber-900" data-i18n="otherDevice"></section>
 
       <!-- Payment -->
@@ -118,6 +135,7 @@
       </section>
 
       <button id="disputeBtn" class="hidden w-full border border-red-300 text-red-700 text-xs font-bold py-2.5 rounded-xl" data-i18n="reportProblem"></button>
+      <button id="cancelBtn" class="hidden w-full border border-slate-300 text-slate-700 text-xs font-bold py-2.5 rounded-xl" data-i18n="cancelOrder"></button>
     </div>
   </div>
 
@@ -142,6 +160,11 @@
       addressPh: 'Quartier / adresse', landmarkPh: 'Repère : portail bleu face pharmacie…', saved: '✅ Enregistré',
       voiceTitle: '🎙️ Indications vocales (15 s max)', record: 'Enregistrer', stop: 'Arrêter', voiceSaved: '✅ Note vocale envoyée au livreur',
       riderTitle: 'Votre livreur', riderVerify: (c) => `Vérifiez-le à la porte : envoyez « /verify ${c} » au bot BayamSafe.`,
+      call: (p) => `📞 Appeler ${p}`, trackTitle: 'Où est mon livreur', nearBanner: '📍 Votre livreur est tout près : préparez votre code et vérifiez le colis avant de le donner.',
+      trackInfo: (d, m) => (d !== undefined ? `À ${d} km de vous · environ ${m} min` : 'En route vers vous'), trackAge: (m) => `position il y a ${m} min`,
+      followBtn: '📲 Suivre ma commande sur Telegram', followHint: 'Recevez chaque étape et la position du livreur. Si c’est ce téléphone qui paie, votre code vous est aussi envoyé sur Telegram.',
+      following: '✅ Suivi Telegram activé.', followNoBot: 'Le suivi Telegram n’est pas disponible pour le moment.',
+      cancelOrder: '✖️ Annuler la commande', cancelConfirm: 'Annuler cette commande ? Si vous avez payé, vous êtes remboursé intégralement.', cancelled: 'Commande annulée.',
       timeline: 'Suivi', reportProblem: '⚠️ Signaler un problème avec le colis', disputePrompt: 'Décrivez le problème :',
       disputed: 'Litige ouvert. L’argent reste bloqué jusqu’à décision.', invalidLink: 'Lien invalide ou expiré. Demandez un nouveau lien au vendeur.',
       footer: 'BayamSafe · Séquestre pour le commerce en ligne au Cameroun', gpsFix: (a) => `Position fixée (±${a} m)`,
@@ -167,6 +190,11 @@
       addressPh: 'Neighbourhood / address', landmarkPh: 'Landmark: blue gate opposite pharmacy…', saved: '✅ Saved',
       voiceTitle: '🎙️ Voice directions (15 s max)', record: 'Record', stop: 'Stop', voiceSaved: '✅ Voice note sent to the rider',
       riderTitle: 'Your rider', riderVerify: (c) => `Check them at the door: send “/verify ${c}” to the BayamSafe bot.`,
+      call: (p) => `📞 Call ${p}`, trackTitle: 'Where is my rider', nearBanner: '📍 Your rider is very close: get your code ready and check the parcel before giving it.',
+      trackInfo: (d, m) => (d !== undefined ? `${d} km from you · about ${m} min` : 'On the way to you'), trackAge: (m) => `position ${m} min ago`,
+      followBtn: '📲 Follow my order on Telegram', followHint: 'Get every step and the rider’s position. If this phone pays, your code is also sent to you on Telegram.',
+      following: '✅ Telegram tracking is on.', followNoBot: 'Telegram tracking is not available right now.',
+      cancelOrder: '✖️ Cancel order', cancelConfirm: 'Cancel this order? If you paid, you get a full refund.', cancelled: 'Order cancelled.',
       timeline: 'Tracking', reportProblem: '⚠️ Report a problem with the parcel', disputePrompt: 'Describe the problem:',
       disputed: 'Dispute opened. The money stays locked until a decision.', invalidLink: 'Invalid or expired link. Ask the seller for a new one.',
       footer: 'BayamSafe · Escrow for social commerce in Cameroon', gpsFix: (a) => `Location fixed (±${a} m)`,
@@ -191,7 +219,7 @@
   const orderId = params.get('o');
   const token = params.get('t');
   const sessionKey = `bs_session_${orderId}`;
-  let view = null, health = null, pollTimer = null, map = null, marker = null, coords = null;
+  let view = null, health = null, pollTimer = null, map = null, marker = null, coords = null, botAvailable = false;
 
   const money = (n) => `${Number(n).toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US')} FCFA`;
   const show = (id, on) => $(id).classList.toggle('hidden', !on);
@@ -276,6 +304,18 @@
       }
     }
 
+    show('riderCall', !!(v.rider && v.rider.phone));
+    if (v.rider && v.rider.phone) { $('riderCall').textContent = t.call(v.rider.phone); $('riderCall').href = 'tel:' + v.rider.phone.replace(/\s/g, ''); }
+
+    show('trackSection', !!v.tracking);
+    if (v.tracking) drawTracking(v.tracking, v.dropoffLocation);
+    show('nearBanner', !!(v.tracking && v.tracking.near));
+
+    const active0 = !['SETTLED', 'REFUNDED', 'CANCELLED', 'EXPIRED', 'DELIVERED'].includes(v.status);
+    show('followSection', active0 && !v.followingOnTelegram && !!(health && botAvailable));
+    show('followingNote', !!v.followingOnTelegram && active0);
+    show('cancelBtn', !!v.can.cancel);
+
     show('disputeBtn', v.can.dispute);
     const ol = $('timeline');
     ol.replaceChildren(...v.history.map((h) => {
@@ -286,7 +326,7 @@
 
     clearTimeout(pollTimer);
     const active = !['SETTLED', 'REFUNDED', 'CANCELLED', 'EXPIRED'].includes(v.status);
-    if (active) pollTimer = setTimeout(load, v.payment.pending ? 4000 : 20000);
+    if (active) pollTimer = setTimeout(load, v.payment.pending ? 4000 : v.tracking ? 10000 : 20000);
   }
 
   async function load() {
@@ -350,6 +390,46 @@
     catch (e) { showError(e.message); }
   };
 
+  let trackMap = null, riderMarker = null, homeMarker = null, trackLine = null;
+  function drawTracking(tr, home) {
+    const t = T();
+    if (typeof L === 'undefined') return;
+    if (!trackMap) {
+      trackMap = L.map('trackMap', { zoomControl: false });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(trackMap);
+    }
+    const r = [tr.lat, tr.lng];
+    if (!riderMarker) riderMarker = L.circleMarker(r, { radius: 10, color: '#0f172a', weight: 3, fillColor: '#f2b705', fillOpacity: 1 }).addTo(trackMap);
+    else riderMarker.setLatLng(r);
+    if (home) {
+      const hm = [home.lat, home.lng];
+      if (!homeMarker) homeMarker = L.circleMarker(hm, { radius: 8, color: '#ffffff', weight: 3, fillColor: '#059669', fillOpacity: 1 }).addTo(trackMap);
+      if (trackLine) trackLine.setLatLngs([r, hm]); else trackLine = L.polyline([r, hm], { color: '#f2b705', weight: 3, dashArray: '5 7' }).addTo(trackMap);
+      trackMap.fitBounds([r, hm], { padding: [30, 30], maxZoom: 16 });
+    } else {
+      trackMap.setView(r, 15);
+    }
+    $('trackInfo').textContent = t.trackInfo(tr.distanceKm, tr.etaMin);
+    $('trackAge').textContent = t.trackAge(Math.max(0, Math.round((Date.now() - Date.parse(tr.at)) / 60000)));
+  }
+
+  $('followBtn').onclick = async () => {
+    try {
+      const res = await api(`/api/checkout/${encodeURIComponent(orderId)}/follow`, { method: 'POST' });
+      store.set(sessionKey, res.sessionToken);
+      window.location.href = res.url;
+    } catch (e) { showError(e.status === 503 ? T().followNoBot : e.message); }
+  };
+
+  $('cancelBtn').onclick = async () => {
+    if (!confirm(T().cancelConfirm)) return;
+    try {
+      view = await api(`/api/checkout/${encodeURIComponent(orderId)}/cancel`, { method: 'POST' });
+      render();
+      showError('');
+    } catch (e) { showError(e.message); }
+  };
+
   $('disputeBtn').onclick = async () => {
     const reason = prompt(T().disputePrompt);
     if (!reason) return;
@@ -388,6 +468,7 @@
   applyI18n();
   if (!orderId || !token) { show('loading', false); showError(T().invalidLink); return; }
   fetch('/api/health').then((r) => r.json()).then((h) => { health = h; if (view) render(); }).catch(() => {});
+  fetch('/api/config').then((r) => r.json()).then((c) => { botAvailable = !!c.botUsername; if (view) render(); }).catch(() => {});
   load();
 })();
 </script>

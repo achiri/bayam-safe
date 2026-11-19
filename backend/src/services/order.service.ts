@@ -66,7 +66,7 @@ export interface BuyerView {
   waybillNumber?: string;
   history: { status: OrderStatus; at: string }[];
   payment: { pending: boolean; operator?: Operator; payerPhoneHint?: string };
-  can: { pay: boolean; editDelivery: boolean; dispute: boolean };
+  can: { pay: boolean; editDelivery: boolean; dispute: boolean; cancel: boolean };
   /** Only present for the device that paid (escrow) or the link holder (COD). */
   releaseCode?: string;
   /** True when the order is paid but this device is not the one that paid. */
@@ -83,6 +83,10 @@ export interface BuyerView {
 const MAX_PAYOUT_ATTEMPTS = 5;
 const FOLLOW_TOKEN_TTL_MS = 30 * 60 * 1000;
 const NEAR_KM = 0.4;
+/** Until a rider has the parcel, either side can simply cancel. */
+export const CANCELLABLE: OrderStatus[] = ['PENDING_PAYMENT', 'AWAITING_RIDER', 'RIDER_ASSIGNED'];
+/** "No rider found" is said at most this often per order (the search itself retries every 10 min). */
+const NO_RIDER_NOTICE_MS = 6 * 3600_000;
 const TRACKING_FRESH_MS = 15 * 60 * 1000;
 /** Statuses in which the parcel is travelling towards the buyer. */
 const HEADING_TO_BUYER: OrderStatus[] = ['IN_TRANSIT', 'OUT_FOR_DELIVERY'];
@@ -314,7 +318,8 @@ export class OrderService {
       can: {
         pay: o.status === 'PENDING_PAYMENT' && o.paymentMode === 'ESCROW',
         editDelivery: !NON_EDITABLE.includes(o.status),
-        dispute: DISPUTABLE_STATUSES.includes(o.status)
+        dispute: DISPUTABLE_STATUSES.includes(o.status),
+        cancel: CANCELLABLE.includes(o.status)
       },
       releaseCode: showCode ? this.secrets.decrypt(o.releaseCodeEnc) : undefined,
       releaseCodeOnOtherDevice: active && o.paymentMode === 'ESCROW' && paid && !sessionOk,
@@ -568,11 +573,22 @@ export class OrderService {
     if (leg === 'FIRST' && order.preferredRiderId) {
       // The seller brought their own rider: only they get the job, wherever they are.
       const r = await this.store.getRider(order.preferredRiderId);
-      this.events.emit(r && r.status === 'APPROVED' ? { type: 'order.offer', order, leg, offers: [{ rider: r }] } : { type: 'order.no_riders', order, leg });
+      if (r && r.status === 'APPROVED') this.events.emit({ type: 'order.offer', order, leg, offers: [{ rider: r }] });
+      else await this.noRiders(order, leg);
       return;
     }
     const offers = await this.dispatch.candidates(order, leg);
-    this.events.emit(offers.length ? { type: 'order.offer', order, leg, offers } : { type: 'order.no_riders', order, leg });
+    if (offers.length) this.events.emit({ type: 'order.offer', order, leg, offers });
+    else await this.noRiders(order, leg);
+  }
+
+  private async noRiders(order: Order, leg: 'FIRST' | 'LAST') {
+    const last = order.noRiderNoticeAt ? Date.parse(order.noRiderNoticeAt) : 0;
+    if (Date.now() - last < NO_RIDER_NOTICE_MS) return;
+    const updated = await this.mutate(order.id, (o) => {
+      o.noRiderNoticeAt = new Date().toISOString();
+    }).catch(() => undefined);
+    this.events.emit({ type: 'order.no_riders', order: updated?.order ?? order, leg });
   }
 
   /** First rider to accept wins; concurrent accepts fail with a version conflict. */
@@ -868,10 +884,11 @@ export class OrderService {
   }
 
   /** Merchant or admin cancels before the parcel is picked up. Paid escrow is refunded in full. */
-  async cancel(orderId: string, actor: { merchantId?: string; admin?: boolean }): Promise<Order> {
+  async cancel(orderId: string, actor: { merchantId?: string; admin?: boolean; buyer?: boolean }): Promise<Order> {
     const current = await this.store.getOrder(orderId);
     if (!current) throw notFound('Order');
-    if (!actor.admin && current.merchantId !== actor.merchantId) throw forbidden();
+    if (!actor.admin && !actor.buyer && current.merchantId !== actor.merchantId) throw forbidden();
+    const by = actor.buyer ? 'buyer' : actor.admin ? 'admin' : 'seller';
     if (current.status === 'PENDING_PAYMENT' && current.payment.reference) {
       await this.syncPayment(current).catch(() => undefined);
     }
@@ -880,22 +897,49 @@ export class OrderService {
         if (o.payment.reference && Date.now() - Date.parse(o.payment.initiatedAt ?? '0') < 10 * 60_000) {
           throw conflict('The buyer is paying right now. Try again in a few minutes.');
         }
-        transition(o, 'CANCELLED', 'cancelled before payment');
+        transition(o, 'CANCELLED', `cancelled by ${by} before payment`);
       } else if (o.status === 'AWAITING_RIDER' || o.status === 'RIDER_ASSIGNED') {
         if (o.paymentMode === 'COD') {
           await this.releaseCodReserve(o, repo);
-          transition(o, 'CANCELLED', 'cancelled before pickup');
+          transition(o, 'CANCELLED', `cancelled by ${by} before pickup`);
         } else {
           await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total }]);
-          transition(o, 'REFUNDED', 'cancelled before pickup, full refund');
+          transition(o, 'REFUNDED', `cancelled by ${by} before pickup, full refund`);
         }
       } else {
-        throw conflict('The parcel has already been picked up. Report a problem instead.');
+        throw new AppError('ALREADY_PICKED_UP', 'Le colis a déjà été récupéré : il faut d’abord le retourner au vendeur.', 409);
       }
     });
     this.events.emit({ type: 'order.status', order });
     if (order.payouts.length) await this.processPayouts(order.id);
     return (await this.store.getOrder(order.id)) ?? order;
+  }
+
+  /**
+   * The seller can stop a deal at any point: before pickup it is a normal cancellation (full
+   * refund); after pickup the parcel must come back first, so it opens a return for admins.
+   */
+  async sellerCancel(orderId: string, merchantId: string): Promise<{ order: Order; kind: 'cancelled' | 'return_opened' }> {
+    const o = await this.store.getOrder(orderId);
+    if (!o || o.merchantId !== merchantId) throw notFound('Order');
+    if (DISPUTABLE_STATUSES.includes(o.status)) {
+      return { order: await this.openDispute(orderId, 'MERCHANT', 'Annulation demandée par le vendeur : retour du colis'), kind: 'return_opened' };
+    }
+    return { order: await this.cancel(orderId, { merchantId }), kind: 'cancelled' };
+  }
+
+  /** The buyer cancels from the checkout page or Telegram, until the parcel is picked up. */
+  async buyerCancel(orderId: string, buyerToken: string | undefined, sessionToken?: string): Promise<BuyerView> {
+    await this.requireBuyer(orderId, buyerToken);
+    const o = await this.cancel(orderId, { buyer: true });
+    return this.view(o, sessionToken);
+  }
+
+  /** Same, from the buyer's Telegram (the account that follows the order). */
+  async buyerCancelFromTelegram(orderId: string, telegramId: number): Promise<Order> {
+    const o = await this.store.getOrder(orderId);
+    if (!o || o.buyerTelegramId !== telegramId) throw notFound('Order');
+    return this.cancel(orderId, { buyer: true });
   }
 
   async expireStale(now = new Date()): Promise<number> {

@@ -170,6 +170,12 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
   );
 
   app.post(
+    '/api/checkout/:orderId/cancel',
+    rateLimit({ windowMs: 60_000, max: 5 }),
+    h(async (req, res) => res.json(await orders.buyerCancel(req.params.orderId, buyerToken(req), buyerSession(req))))
+  );
+
+  app.post(
     '/api/checkout/:orderId/dispute',
     rateLimit({ windowMs: 60_000, max: 5 }),
     json,

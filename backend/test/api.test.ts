@@ -92,6 +92,19 @@ describe('HTTP API', () => {
     assert.equal(dispute.body.status, 'DISPUTED');
   });
 
+  it('buyer can cancel from the checkout page before pickup', async () => {
+    const merchant = await makeMerchant(app);
+    const { order, buyerToken } = await app.orders.createOrder(merchant, intraInput());
+    const auth = { 'x-buyer-token': buyerToken };
+    const before = await call('GET', `/api/checkout/${order.id}`, { headers: auth });
+    assert.equal(before.body.can.cancel, true);
+    assert.equal((await call('POST', `/api/checkout/${order.id}/cancel`)).status, 404);
+    const res = await call('POST', `/api/checkout/${order.id}/cancel`, { headers: auth });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'CANCELLED');
+    assert.equal(res.body.can.cancel, false);
+  });
+
   it('public tracking shows status only', async () => {
     const merchant = await makeMerchant(app);
     const { order } = await app.orders.createOrder(merchant, intraInput());

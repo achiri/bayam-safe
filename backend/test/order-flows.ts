@@ -247,6 +247,44 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       await rejects(app.orders.createOrder(merchant, intraInput({ buyerPhone: '0612345678' })), 'INVALID');
     });
 
+    it('the buyer can cancel until pickup (full refund) but not after; the seller can always stop the deal', async () => {
+      const app = await fresh();
+      const merchant = await makeMerchant(app);
+      const rider = await makeRider(app);
+
+      const a = await paidOrder(app, merchant);
+      await app.orders.claim(rider.telegramId, a.order.id); // rider on the way to the seller: still cancellable
+      const view = await app.orders.buyerCancel(a.order.id, a.buyerToken, a.sessionToken);
+      assert.equal(view.status, 'REFUNDED');
+      assert.equal(view.can.cancel, false);
+      const refunded = (await app.store.getOrder(a.order.id))!;
+      assert.deepEqual(refunded.payouts.map((p) => [p.kind, p.amount]), [['BUYER_REFUND', 21500]]);
+      assert.match(refunded.history.at(-1)!.note!, /cancelled by buyer/);
+      await rejects(app.orders.buyerCancel(a.order.id, 'wrong-token'), 'NOT_FOUND');
+
+      const b = await paidOrder(app, merchant);
+      await app.orders.claim(rider.telegramId, b.order.id);
+      await app.orders.confirmPickup(rider.telegramId, b.order.id);
+      await rejects(app.orders.buyerCancel(b.order.id, b.buyerToken), 'ALREADY_PICKED_UP');
+      const stop = await app.orders.sellerCancel(b.order.id, merchant.id);
+      assert.equal(stop.kind, 'return_opened');
+      assert.equal(stop.order.status, 'DISPUTED');
+      assert.equal(stop.order.dispute?.openedBy, 'MERCHANT');
+
+      const c = await app.orders.createOrder(merchant, intraInput());
+      assert.equal((await app.orders.sellerCancel(c.order.id, merchant.id)).order.status, 'CANCELLED');
+      await rejects(app.orders.sellerCancel(c.order.id, 'someone-else'), 'NOT_FOUND');
+    });
+
+    it('"no rider found" is announced once, not on every 10-minute retry', async () => {
+      const app = await fresh();
+      const merchant = await makeMerchant(app);
+      const { order } = await paidOrder(app, merchant); // no riders exist at all
+      for (let i = 0; i < 3; i++) await app.orders.offerToRiders((await app.store.getOrder(order.id))!, 'FIRST');
+      await tick();
+      assert.equal(app.events.history.filter((e) => e.type === 'order.no_riders' && e.order.id === order.id).length, 1);
+    });
+
     it('cancelling a paid order before pickup refunds the buyer in full', async () => {
       const app = await fresh();
       const merchant = await makeMerchant(app);

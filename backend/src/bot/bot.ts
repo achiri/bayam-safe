@@ -8,6 +8,8 @@ import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../d
 import { DomainEvent } from '../services/events.js';
 import { esc, t } from '../i18n/locales.js';
 import { registerOnboarding } from './onboarding.js';
+import { CANCELLABLE } from '../services/order.service.js';
+import { DISPUTABLE_STATUSES } from '../domain/order-state.js';
 
 type Strings = ReturnType<typeof t>;
 
@@ -321,7 +323,8 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
 
   const merchantOrderKeyboard = (s: Strings, o: Order) => {
     const kb = new InlineKeyboard();
-    if (['PENDING_PAYMENT', 'AWAITING_RIDER', 'RIDER_ASSIGNED'].includes(o.status)) kb.text(s.btnCancelOrder, `m:cancel:${o.id}`).row();
+    if (CANCELLABLE.includes(o.status)) kb.text(s.btnCancelOrder, `m:cancel:${o.id}`).row();
+    else if (DISPUTABLE_STATUSES.includes(o.status)) kb.text(s.btnCancelReturn, `m:cancel:${o.id}`).row();
     if (o.status === 'AT_AGENCY') kb.text(s.btnArrived, `m:arrived:${o.id}`).row();
     if (['PENDING_PAYMENT', 'AWAITING_RIDER'].includes(o.status)) {
       kb.text(s.btnAssignOwn, `m:own:${o.id}`);
@@ -367,8 +370,9 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await ctx.answerCallbackQuery();
     const u = await requireUser(ctx);
     if (!u) return;
-    const o = await orders.cancel(ctx.match[1], { merchantId: u.id });
-    await html(ctx, ctx.s.orderCancelledMsg(o.trackingCode));
+    const { order: o, kind } = await orders.sellerCancel(ctx.match[1], u.id);
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await html(ctx, kind === 'return_opened' ? ctx.s.mReturnOpened(o.trackingCode) : ctx.s.orderCancelledMsg(o.trackingCode));
   }));
 
   bot.callbackQuery(/^m:arrived:(.+)$/, guard(async (ctx) => {
@@ -495,7 +499,9 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     ctx.session.flow = undefined;
     const pitch = ctx.s.whatsappPitch(order.itemTitle, order.total, checkoutUrl);
     await html(ctx, ctx.s.orderCreated(order.trackingCode, checkoutUrl, order.paymentMode === 'COD'), {
-      reply_markup: new InlineKeyboard().url(ctx.s.btnShareWhatsapp, `https://wa.me/?text=${encodeURIComponent(pitch)}`)
+      reply_markup: new InlineKeyboard()
+        .url(ctx.s.btnShareWhatsapp, `https://wa.me/?text=${encodeURIComponent(pitch)}`).row()
+        .text(ctx.s.btnAssignOwn, `m:own:${order.id}`).text(ctx.s.btnCancelOrder, `m:cancel:${order.id}`)
     });
   }));
 
@@ -689,6 +695,12 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     });
   }));
 
+  bot.callbackQuery(/^b:cancel:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await orders.buyerCancelFromTelegram(ctx.match[1], ctx.from.id);
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+  }));
+
   // ------------------------------------------------------------------ admin buttons
 
   bot.callbackQuery(/^adm:rider:(.+):(a|r:(\w+))$/, guard(async (ctx) => {
@@ -860,8 +872,12 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   const toBuyer = async (o: Order, build: (s: Strings) => string, where = false) => {
     if (!o.buyerTelegramId) return;
     const s = t(o.buyerLang ?? 'fr');
-    await send(o.buyerTelegramId, build(s), where ? { reply_markup: new InlineKeyboard().text(s.btnWhere, `b:where:${o.id}`) } : {});
+    const kb = new InlineKeyboard();
+    if (where) kb.text(s.btnWhere, `b:where:${o.id}`);
+    if (CANCELLABLE.includes(o.status)) kb.text(s.btnBuyerCancel, `b:cancel:${o.id}`);
+    await send(o.buyerTelegramId, build(s), kb.inline_keyboard.flat().length ? { reply_markup: kb } : {});
   };
+  const cancelledBy = (o: Order) => (/cancelled by (\w+)/.exec(o.history.at(-1)?.note ?? '')?.[1] ?? 'seller');
 
   async function notifyBuyerOfStatus(o: Order) {
     const riderFor = async (id?: string) => (id ? store.getRider(id) : undefined);
@@ -892,7 +908,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       case 'REFUNDED':
         return toBuyer(o, (s) => s.bRefunded);
       case 'CANCELLED':
-        return toBuyer(o, (s) => s.bCancelled);
+        return toBuyer(o, (s) => (cancelledBy(o) === 'buyer' ? s.bCancelledByYou : s.bCancelled));
     }
   }
 
@@ -960,7 +976,8 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       }
       case 'order.no_riders': {
         const m = await merchantOf(e.order);
-        if (m) await send(m.telegramId, t(m.lang).mNoRiders(e.order.trackingCode));
+        if (m) await send(m.telegramId, t(m.lang).mNoRiders(e.order.trackingCode), { reply_markup: merchantOrderKeyboard(t(m.lang), e.order) });
+        await toBuyer(e.order, (s) => s.bNoRiders);
         await toAdmins(`🚨 No rider for <code>${esc(e.order.trackingCode)}</code> (${e.leg} leg)`);
         return;
       }
@@ -978,6 +995,10 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         if (o.status === 'SETTLED') {
           const p = o.payouts.find((x) => x.kind === 'MERCHANT');
           if (p) await send(m.telegramId, s.mSettled(o.trackingCode, p.amount));
+          return;
+        }
+        if ((o.status === 'CANCELLED' || o.status === 'REFUNDED') && cancelledBy(o) === 'buyer') {
+          await send(m.telegramId, s.mCancelledByBuyer(o.trackingCode, o.itemTitle));
           return;
         }
         await send(m.telegramId, s.mStatus(o.trackingCode, s.status(o.status)), { reply_markup: merchantOrderKeyboard(s, o) });

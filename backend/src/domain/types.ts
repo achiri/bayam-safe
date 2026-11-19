@@ -199,6 +199,8 @@ export interface Order {
   followSessionHash?: string;
   /** Set once the buyer has been told the rider is close. */
   riderNearNotifiedAt?: string;
+  /** Last time seller/buyer/admins were told no rider is available (to avoid repeating it). */
+  noRiderNoticeAt?: string;
   /** COD: rider whose float is reserved against this order. */
   codRiderId?: string;
   codReserved: number;
