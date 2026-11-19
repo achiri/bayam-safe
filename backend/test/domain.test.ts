@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.js';
 import { computePricing, refundPlan, settlementPlan } from '../src/domain/money.js';
 import { canTransition, transition } from '../src/domain/order-state.js';
 import { parseCoordinates } from '../src/domain/geo.js';
-import { detectOperator, maskPhone, normalizeCameroonPhone } from '../src/domain/phone.js';
+import { detectOperator, maskPhone, normalizeCameroonPhone, normalizeContactPhone } from '../src/domain/phone.js';
 import { Secrets, newTrackingCode } from '../src/domain/secrets.js';
 import { Order } from '../src/domain/types.js';
 import { signHs256, verifyHs256 } from '../src/payments/jwt.js';
@@ -28,6 +28,19 @@ describe('phone numbers', () => {
     assert.equal(detectOperator('656123456'), 'ORANGE');
     assert.equal(detectOperator('662123456'), undefined);
     assert.equal(maskPhone('671234567'), '+237 6•• ••• 567');
+  });
+});
+
+describe('buyer contact numbers', () => {
+  it('accepts Cameroon numbers as before and foreign numbers written with their country code', () => {
+    assert.equal(normalizeContactPhone('671234567'), '+237671234567');
+    assert.equal(normalizeContactPhone('+237 671 234 567'), '+237671234567');
+    assert.equal(normalizeContactPhone('+33 6 12 34 56 78'), '+33612345678');
+    assert.equal(normalizeContactPhone('0044 7700 900123'), '+447700900123');
+    assert.equal(normalizeContactPhone('+1 (415) 555-0100'), '+14155550100');
+  });
+  it('rejects foreign numbers without a country code and malformed input', () => {
+    for (const raw of ['0612345678', '12345', '+12', '+237 271234567', 'abc', '']) assert.throws(() => normalizeContactPhone(raw), undefined, raw);
   });
 });
 

@@ -68,7 +68,8 @@ const fr = {
   askAgency: '🚌 Depuis quelle agence partira le colis ?',
   askDestination: '🏁 Ville de destination ?',
   askAgencyFee: '🧾 Frais d’expédition de l’agence en FCFA (payés au guichet par le livreur, remboursés à la livraison) ?',
-  askBuyerPhone: '📱 Numéro du client (ex : 671234567) ?',
+  askBuyerPhone:
+    '📱 Numéro WhatsApp / téléphone du client ?\nCameroun : <code>671234567</code> · Étranger : avec l’indicatif, ex : <code>+33 6 12 34 56 78</code>',
   buyerIsYou: '⚠️ C’est votre propre numéro. Entrez le numéro du client (pour un test, n’importe quel autre numéro valide : vous pourrez payer avec votre MoMo sur la page de paiement).',
   btnEditBuyer: '✏️ Changer le numéro du client',
   askPickup: '📍 Adresse de ramassage (quartier, repère).\nVous pouvez aussi d’abord partager votre position 📎 → Position.',
@@ -263,7 +264,8 @@ const en: Strings = {
   askAgency: '🚌 Which agency will the parcel leave from?',
   askDestination: '🏁 Destination city?',
   askAgencyFee: '🧾 Agency shipping fee in FCFA (paid at the counter by the rider, reimbursed on delivery)?',
-  askBuyerPhone: '📱 Buyer phone number (e.g. 671234567)?',
+  askBuyerPhone:
+    '📱 Buyer’s WhatsApp / phone number?\nCameroon: <code>671234567</code> · Abroad: with the country code, e.g. <code>+44 7700 900123</code>',
   buyerIsYou: '⚠️ That’s your own number. Enter the buyer’s number (for a test, any other valid number works: you can still pay with your own MoMo on the payment page).',
   btnEditBuyer: '✏️ Change buyer number',
   askPickup: '📍 Pickup address (neighbourhood, landmark).\nYou can also share your location first 📎 → Location.',

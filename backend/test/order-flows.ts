@@ -237,6 +237,16 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       assert.ok(again.sessionToken);
     });
 
+    it('a buyer abroad can be the contact; the refund still goes to the Mobile Money number that paid', async () => {
+      const app = await fresh();
+      const merchant = await makeMerchant(app);
+      const { order } = await paidOrder(app, merchant, intraInput({ buyerPhone: '+33 6 12 34 56 78' }));
+      assert.equal(order.buyerPhone, '+33612345678');
+      const c = await app.orders.cancel(order.id, { merchantId: merchant.id });
+      assert.deepEqual(c.payouts.map((p) => [p.kind, p.phone]), [['BUYER_REFUND', '+237677001122']]);
+      await rejects(app.orders.createOrder(merchant, intraInput({ buyerPhone: '0612345678' })), 'INVALID');
+    });
+
     it('cancelling a paid order before pickup refunds the buyer in full', async () => {
       const app = await fresh();
       const merchant = await makeMerchant(app);

@@ -3,7 +3,7 @@ import { AppError, conflict, forbidden, invalid, notFound } from '../domain/erro
 import { assertGeoPoint } from '../domain/geo.js';
 import { computePricing, refundPlan, settlementPlan, PayoutPlanLine } from '../domain/money.js';
 import { DISPUTABLE_STATUSES, TERMINAL_STATUSES, deliverableStatus, transition } from '../domain/order-state.js';
-import { detectOperator, normalizeCameroonPhone } from '../domain/phone.js';
+import { detectOperator, normalizeCameroonPhone, normalizeContactPhone } from '../domain/phone.js';
 import { Secrets, newId, newReleaseCode, newTrackingCode, safeEqual } from '../domain/secrets.js';
 import {
   Dispute, GeoPoint, LedgerAccount, Operator, Order, OrderStatus, OrderType, PaymentMode, Payout, PayoutKind, Rider, User
@@ -140,7 +140,7 @@ export class OrderService {
       throw invalid('Cash on delivery is only available for deliveries within the same city.');
     }
 
-    const buyerPhone = normalizeCameroonPhone(input.buyerPhone);
+    const buyerPhone = normalizeContactPhone(input.buyerPhone); // contact only: may be a foreign WhatsApp number
     if (buyerPhone === merchant.phone) throw invalid('The buyer phone must be different from your own.');
 
     let originCity = merchant.city;
@@ -591,7 +591,8 @@ export class OrderService {
       case 'MERCHANT':
         return o.merchantPhone;
       case 'BUYER_REFUND':
-        return o.payment.payerPhone ?? o.buyerPhone;
+        // Refunds go back to the Mobile Money number that paid (the buyer contact may be foreign).
+        return o.payment.payerPhone ?? '';
       case 'FIRST_MILE_RIDER':
         return riders.get(o.firstMileRiderId ?? '')?.phone ?? '';
       case 'LAST_MILE_RIDER':

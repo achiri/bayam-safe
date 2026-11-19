@@ -195,13 +195,15 @@ describe('telegram bot', () => {
     await h.text(M, 'Akwa, face Total');
     await h.press(M, 'ord:mode:ESCROW');
     await h.press(M, 'ord:edit_buyer'); // fix the buyer number from the summary
-    await h.text(M, '677 88 99 00');
-    assert.match(h.lastText(), /677 88 99 00/);
+    await h.text(M, '06 12 34 56 78'); // a foreign number without its country code is refused
+    assert.match(h.lastText(), /indicatif/);
+    await h.text(M, '+33 6 12 34 56 78'); // a buyer abroad on WhatsApp
+    assert.match(h.lastText(), /\+33 6 12 34 56 78/);
     await h.press(M, 'ord:confirm');
     assert.match(h.lastText(), /checkout\.html#o=/);
     const [order] = await h.app.orders.listForMerchant(merchant.id);
     assert.equal(order.merchantVerified, true);
-    assert.equal(order.buyerPhone, '+237677889900');
+    assert.equal(order.buyerPhone, '+33612345678');
 
     // Buyer pays; rider accepts and delivers with the code.
     const rider = await makeRider(h.app);

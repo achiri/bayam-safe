@@ -3,7 +3,7 @@ import { App } from '../app.js';
 import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError } from '../domain/errors.js';
 import { googleMapsRoute } from '../domain/geo.js';
-import { isValidCameroonPhone, normalizeCameroonPhone } from '../domain/phone.js';
+import { isValidContactPhone, normalizeContactPhone } from '../domain/phone.js';
 import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../domain/types.js';
 import { DomainEvent } from '../services/events.js';
 import { esc, t } from '../i18n/locales.js';
@@ -696,9 +696,9 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
           return html(ctx, s.askBuyerPhone);
         }
         if (f.step === 'buyer') {
-          if (!isValidCameroonPhone(text)) return html(ctx, s.askBuyerPhone);
+          if (!isValidContactPhone(text)) return html(ctx, s.askBuyerPhone);
           // The seller can't be their own buyer: say so now, not after the whole form.
-          if (ctx.user && normalizeCameroonPhone(text) === ctx.user.phone) return html(ctx, s.buyerIsYou);
+          if (ctx.user && normalizeContactPhone(text) === ctx.user.phone) return html(ctx, s.buyerIsYou);
           d.buyer = text;
           if (d.backToSummary) {
             d.backToSummary = false;
