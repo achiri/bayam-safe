@@ -23,6 +23,7 @@ These come from the customer. Don't change them without asking.
 11. A seller who owes more than 10,000 FCFA can only create prepaid orders. An admin can write off debt, and the write-off is logged in the audit journal.
 12. Rider phone is shown only to the paying device (any device for COD), and only once the parcel is on the way.
 13. GPS rule for "absent" and "refused": within 250 m of the drop-off, location under 5 minutes old.
+14. A COD buyer who cancels after a rider accepted pays nothing and gets no strike, and the rider is not paid.
 
 ## Phase 1: nothing gets stuck, no money gets lost · P0 · In sprint
 
@@ -103,7 +104,7 @@ These come from the customer. Don't change them without asking.
 
 - **BS-408 Payout number: let the user cancel a pending change** themselves (today only an admin can reject it).
 - **BS-409 Withdrawal sweeper:** move the SENDING → NEEDS_REVIEW flag inside a transaction.
-- **BS-410 COD buyer cancel after a rider accepted** pays the rider nothing, because there is no prepayment to take the fee from. Needs the customer's decision.
+- ~~BS-410 COD buyer cancel after a rider accepted~~ Decided 2026-11-20 (decision 14): it stays free. No fee, no strike, and the rider is not paid. No code change is needed.
 
 ## Later
 

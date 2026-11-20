@@ -75,7 +75,7 @@ Either the seller or the buyer can cancel until a rider has picked up the parcel
 | **After a rider accepted, before pickup, cancelled by the seller (policy 1)** | The buyer gets the **full amount**. The rider receives **half of the delivery fee**, paid by the seller (rounded down; it is added to what the seller owes and recovered from future payouts, see section 1). |
 | **After pickup** | The parcel cannot just be cancelled. It must first go back to the seller (section 3). |
 
-Cash-on-delivery orders follow the same stages, but there is no buyer refund, because the buyer has not paid. So a buyer who cancels a cash order after a rider accepted pays nothing and the rider is not paid (the fee is only ever taken from a refund). The rider's reserved deposit is released.
+Cash-on-delivery orders follow the same stages, but there is no buyer refund, because the buyer has not paid. So a buyer who cancels a cash order after a rider accepted pays nothing, gets no refusal strike, and the rider is not paid (owner decision, 2026-11-20). The rider's reserved deposit is released.
 
 ## 3. Returns after pickup
 
