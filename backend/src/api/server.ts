@@ -1,8 +1,8 @@
 import express, { NextFunction, Request, RequestHandler, Response } from 'express';
 import path from 'node:path';
 import { App } from '../app.js';
-import { AppError, forbidden, invalid } from '../domain/errors.js';
-import { safeEqual } from '../domain/secrets.js';
+import { AppError, forbidden, invalid, unauthorized } from '../domain/errors.js';
+import { newId, safeEqual } from '../domain/secrets.js';
 import { LedgerAccount, Order, OrderStatus, User } from '../domain/types.js';
 import { SimulatedGateway } from '../payments/simulated.js';
 import { rateLimit } from './rate-limit.js';
@@ -15,11 +15,13 @@ const h =
     fn(req, res).catch(next);
 
 const buyerToken = (req: Request) => req.header('x-buyer-token') ?? undefined;
+/** Parses a `limit` query param into [1, max]; falls back to `def` when missing or not a number. */
+const clampLimit = (v: unknown, def: number, max: number) => Math.min(Math.max(Math.floor(Number(v ?? def)) || def, 1), max);
 const buyerSession = (req: Request) => req.header('x-buyer-session') ?? undefined;
 
 /** Strips secrets before an order leaves the server (admin views). */
 export function redactOrder(o: Order) {
-  const { buyerTokenHash, buyerSessionHash, releaseCodeEnc, ...rest } = o;
+  const { buyerTokenHash, buyerSessionHash, releaseCodeEnc, followTokenHash, followSessionHash, followTokenExpiresAt, ...rest } = o;
   const { pendingSessionHash, ...payment } = o.payment;
   return { ...rest, payment };
 }
@@ -31,7 +33,7 @@ export function redactUser(u: User) {
 }
 
 const ACCOUNTS: LedgerAccount[] = [
-  'GATEWAY_CLEARING', 'ESCROW', 'MERCHANT_PAYABLE', 'RIDER_PAYABLE', 'BUYER_REFUND_PAYABLE', 'PLATFORM_REVENUE', 'RIDER_FLOAT'
+  'GATEWAY_CLEARING', 'ESCROW', 'MERCHANT_PAYABLE', 'RIDER_PAYABLE', 'BUYER_REFUND_PAYABLE', 'PLATFORM_REVENUE', 'RIDER_FLOAT', 'MERCHANT_RECEIVABLE'
 ];
 
 export interface ServerOptions {
@@ -58,17 +60,25 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     next();
   });
 
+  app.use(['/api/checkout', '/api/admin'], (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+
   // ---------------------------------------------------------------- static pages (landing, checkout, admin)
   const webDir = opts.webDir ?? path.resolve(__dirname, '../../../web');
   const csp = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com",
-    "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
-    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://unpkg.com",
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org",
     "media-src 'self' blob:",
     "connect-src 'self'",
-    "frame-ancestors 'none'"
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'"
   ].join('; ');
   app.use(express.static(webDir, { index: false, setHeaders: (res) => res.setHeader('Content-Security-Policy', csp) }));
 
@@ -176,10 +186,34 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
   );
 
   app.post(
+    '/api/checkout/:orderId/confirm-received',
+    rateLimit({ windowMs: 60_000, max: 10 }),
+    h(async (req, res) => res.json(await orders.buyerConfirmReceived(req.params.orderId, buyerToken(req), buyerSession(req))))
+  );
+
+  app.post(
+    '/api/checkout/:orderId/confirm-arrival',
+    rateLimit({ windowMs: 60_000, max: 10 }),
+    h(async (req, res) => res.json(await orders.buyerConfirmArrival(req.params.orderId, buyerToken(req), buyerSession(req))))
+  );
+
+  /** Dispute evidence photo (raw image body, 3 MB max). */
+  app.post(
+    '/api/checkout/:orderId/evidence',
+    rateLimit({ windowMs: 60_000, max: 8 }),
+    express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '3mb' }),
+    h(async (req, res) => {
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw invalid('Send the photo as an image/jpeg, image/png or image/webp body');
+      await orders.buyerAddEvidence(req.params.orderId, buyerToken(req), req.header('content-type') ?? '', req.body, buyerSession(req));
+      res.json({ ok: true });
+    })
+  );
+
+  app.post(
     '/api/checkout/:orderId/dispute',
     rateLimit({ windowMs: 60_000, max: 5 }),
     json,
-    h(async (req, res) => res.json(await orders.buyerOpenDispute(req.params.orderId, buyerToken(req), String(req.body?.reason ?? ''))))
+    h(async (req, res) => res.json(await orders.buyerOpenDispute(req.params.orderId, buyerToken(req), String(req.body?.reason ?? ''), buyerSession(req))))
   );
 
   // ---------------------------------------------------------------- payment webhook
@@ -247,16 +281,31 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     const presented = (req.header('authorization') ?? '').replace(/^Bearer\s+/i, '');
     const keyOk = !!config.ADMIN_API_KEY && !!presented && safeEqual(presented, config.ADMIN_API_KEY);
     const sessionOk = !!presented && !!verifyAdminSession(config.APP_SECRET, presented);
-    if (!keyOk && !sessionOk) return next(forbidden('Admin login required'));
+    if (!keyOk && !sessionOk) return next(unauthorized('Admin login required', 'ADMIN_AUTH_REQUIRED'));
+    next();
+  });
+  admin.use((req, res, next) => {
+    const presented = (req.header('authorization') ?? '').replace(/^Bearer\s+/i, '');
+    res.locals.adminName = verifyAdminSession(config.APP_SECRET, presented)?.username ?? 'admin';
     next();
   });
   admin.use(json);
+
+  const audit = (res: Response, action: string, target?: string, note?: unknown) =>
+    store.addAudit({
+      id: newId(),
+      at: new Date().toISOString(),
+      actor: String(res.locals.adminName ?? 'admin'),
+      action,
+      target,
+      note: typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : undefined
+    });
 
   admin.get(
     '/orders',
     h(async (req, res) => {
       const statuses = typeof req.query.status === 'string' ? (req.query.status.split(',') as OrderStatus[]) : undefined;
-      const list = await store.listOrders({ statuses, limit: Number(req.query.limit ?? 100) });
+      const list = await store.listOrders({ statuses, limit: clampLimit(req.query.limit, 100, 500) });
       res.json(list.map(redactOrder));
     })
   );
@@ -272,23 +321,74 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     '/orders/:id/resolve',
     h(async (req, res) => {
       const resolution = req.body?.resolution;
-      if (resolution !== 'REFUND_BUYER' && resolution !== 'RELEASE_TO_MERCHANT') throw invalid('resolution must be REFUND_BUYER or RELEASE_TO_MERCHANT');
-      res.json(redactOrder(await orders.resolveDispute(req.params.id, resolution, req.body?.note)));
+      if (resolution !== 'REFUND_BUYER' && resolution !== 'RELEASE_TO_MERCHANT' && resolution !== 'SPLIT') {
+        throw invalid('resolution must be REFUND_BUYER, RELEASE_TO_MERCHANT or SPLIT');
+      }
+      let buyerAmount: number | undefined;
+      if (resolution === 'SPLIT') {
+        buyerAmount = req.body?.buyerAmount;
+        if (typeof buyerAmount !== 'number' || !Number.isInteger(buyerAmount) || buyerAmount < 0) throw invalid('buyerAmount must be a whole number of FCFA');
+      }
+      const o = await orders.resolveDispute(req.params.id, resolution, req.body?.note, { buyerAmount, by: 'admin' });
+      await audit(res, `dispute.resolve.${resolution}`, req.params.id, `${buyerAmount !== undefined ? `buyerAmount=${buyerAmount} ` : ''}${req.body?.note ?? ''}`);
+      res.json(redactOrder(o));
     })
   );
-  admin.post('/orders/:id/cancel', h(async (req, res) => res.json(redactOrder(await orders.cancel(req.params.id, { admin: true })))));
-  admin.post('/orders/:id/arrived', h(async (req, res) => res.json(redactOrder(await orders.markArrivedAtHub(req.params.id, { admin: true })))));
+  admin.post(
+    '/orders/:id/cancel',
+    h(async (req, res) => {
+      const o = await orders.cancel(req.params.id, { admin: true });
+      await audit(res, 'order.cancel', req.params.id);
+      res.json(redactOrder(o));
+    })
+  );
+  admin.post(
+    '/orders/:id/arrived',
+    h(async (req, res) => {
+      const o = await orders.markArrivedAtHub(req.params.id, { admin: true });
+      await audit(res, 'order.arrived', req.params.id);
+      res.json(redactOrder(o));
+    })
+  );
+  admin.post(
+    '/orders/:id/resume',
+    h(async (req, res) => {
+      const o = await orders.adminResume(req.params.id, req.body?.note);
+      await audit(res, 'order.resume', req.params.id, req.body?.note);
+      res.json(redactOrder(o));
+    })
+  );
+  admin.post(
+    '/orders/:id/reassign',
+    h(async (req, res) => {
+      const riderCode = req.body?.riderCode ?? null;
+      if (riderCode !== null && typeof riderCode !== 'string') throw invalid('riderCode must be a string or null');
+      const o = await orders.adminReassign(req.params.id, riderCode);
+      await audit(res, 'order.reassign', req.params.id, riderCode ?? 'auto-dispatch');
+      res.json(redactOrder(o));
+    })
+  );
+  /** Re-sends the release code to the buyer's channels; the code itself is never returned here. */
+  admin.post(
+    '/orders/:id/send-code',
+    h(async (req, res) => {
+      await orders.adminResendCode(req.params.id);
+      await audit(res, 'order.send_code', req.params.id);
+      res.json({ ok: true });
+    })
+  );
   admin.post(
     '/orders/:id/payouts/:payoutId/review',
     h(async (req, res) => {
       const action = req.body?.action;
       if (action !== 'MARK_SENT' && action !== 'RETRY') throw invalid('action must be MARK_SENT or RETRY');
       const o = await orders.reviewPayout(req.params.id, req.params.payoutId, action, req.body?.reference);
+      await audit(res, `payout.${action.toLowerCase()}`, `${req.params.id}/${req.params.payoutId}`, req.body?.reference);
       res.json(o ? redactOrder(o) : { ok: true });
     })
   );
   admin.get('/kyc', h(async (_req, res) => res.json((await users.pendingKyc()).map(redactUser))));
-  admin.get('/users', h(async (req, res) => res.json((await store.listUsers(Number(req.query.limit ?? 300))).map(redactUser))));
+  admin.get('/users', h(async (req, res) => res.json((await store.listUsers(clampLimit(req.query.limit, 300, 1000))).map(redactUser))));
   admin.get(
     '/users/:id',
     h(async (req, res) => {
@@ -300,7 +400,41 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
   );
   admin.post(
     '/users/:id/kyc',
-    h(async (req, res) => res.json(redactUser(await users.decideKyc(req.params.id, req.body?.approve === true, req.body?.note))))
+    h(async (req, res) => {
+      const approve = req.body?.approve === true;
+      const u = await users.decideKyc(req.params.id, approve, req.body?.note);
+      await audit(res, approve ? 'kyc.approve' : 'kyc.reject', req.params.id, req.body?.note);
+      res.json(redactUser(u));
+    })
+  );
+  admin.post(
+    '/users/:id/suspend',
+    h(async (req, res) => {
+      const u = await users.suspend(req.params.id, req.body?.note);
+      await audit(res, 'user.suspend', req.params.id, req.body?.note);
+      res.json(redactUser(u));
+    })
+  );
+  admin.post(
+    '/users/:id/unsuspend',
+    h(async (req, res) => {
+      const u = await users.unsuspend(req.params.id);
+      await audit(res, 'user.unsuspend', req.params.id);
+      res.json(redactUser(u));
+    })
+  );
+  admin.get('/payout-phones', h(async (_req, res) => res.json((await users.listPendingPayoutPhones()).map(redactUser))));
+  admin.post(
+    '/users/:id/payout-phone',
+    h(async (req, res) => {
+      if (typeof req.body?.approve !== 'boolean') throw invalid('approve must be true or false');
+      const before = await store.getUser(req.params.id);
+      const oldPhone = before?.payoutPhone ?? before?.phone ?? '?';
+      const newPhone = before?.pendingPayoutPhone ?? '?';
+      const u = await users.decidePayoutPhone(req.params.id, req.body.approve);
+      await audit(res, req.body.approve ? 'payout_phone.approve' : 'payout_phone.reject', req.params.id, `${oldPhone} -> ${newPhone}`);
+      res.json(redactUser(u));
+    })
   );
   admin.get('/riders', h(async (req, res) => res.json(await store.listRiders({ status: req.query.status as any }))));
   admin.post(
@@ -308,7 +442,9 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     h(async (req, res) => {
       const status = req.body?.status;
       if (!['APPROVED', 'REJECTED', 'SUSPENDED'].includes(status)) throw invalid('status must be APPROVED, REJECTED or SUSPENDED');
-      res.json(await riders.decide(req.params.id, status, req.body?.note));
+      const r = await riders.decide(req.params.id, status, req.body?.note);
+      await audit(res, `rider.${String(status).toLowerCase()}`, req.params.id, req.body?.note);
+      res.json(r);
     })
   );
 
@@ -321,6 +457,27 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
       res.setHeader('Content-Type', f.mime);
       res.setHeader('Cache-Control', 'private, max-age=600');
       res.send(f.data);
+    })
+  );
+
+  /** Dispute evidence (and other order media) for the admin to review. */
+  admin.get(
+    '/media/:id',
+    h(async (req, res) => {
+      const m = await store.getMedia(req.params.id);
+      if (!m) throw new AppError('NOT_FOUND', 'Media not found', 404);
+      res.setHeader('Content-Type', m.mime);
+      if (!/^image\//.test(m.mime)) res.setHeader('Content-Disposition', 'attachment');
+      res.setHeader('Cache-Control', 'private, max-age=600');
+      res.send(m.data);
+    })
+  );
+
+  admin.get(
+    '/audit',
+    h(async (req, res) => {
+      const limit = Math.min(Math.max(Math.floor(Number(req.query.limit ?? 100)) || 100, 1), 500);
+      res.json(await store.listAudit(limit));
     })
   );
 

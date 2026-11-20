@@ -1,4 +1,10 @@
-import { FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
+import { AuditEntry, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
+
+/** Keyset cursor for oldest-first pagination (updated_at, then id). */
+export interface OldestFirstCursor {
+  updatedAt: string;
+  id: string;
+}
 
 export interface OrderQuery {
   merchantId?: string;
@@ -19,6 +25,17 @@ export interface Repo {
   getOrderByPaymentRef(ref: string): Promise<Order | undefined>;
   updateOrder(o: Order): Promise<Order>;
   listOrders(q: OrderQuery): Promise<Order[]>;
+  /**
+   * Orders in any of `statuses`, oldest `updatedAt` first (ties by id), strictly after the cursor.
+   * Background jobs page through this so old orders are never starved by newer ones.
+   * `withPaymentReference` keeps only orders that have a payment attempt in flight.
+   */
+  listOrdersByStatusOldestFirst(
+    statuses: OrderStatus[],
+    limit: number,
+    after?: OldestFirstCursor,
+    opts?: { withPaymentReference?: boolean }
+  ): Promise<Order[]>;
   listPendingExpired(now: string): Promise<Order[]>;
   listOrdersWithPendingPayouts(): Promise<Order[]>;
 
@@ -51,6 +68,20 @@ export interface Repo {
 
   putMedia(m: Media): Promise<void>;
   getMedia(id: string): Promise<Media | undefined>;
+  deleteMedia(id: string): Promise<void>;
+
+  /** COD orders this buyer number refused (or wasn't there for) since the given time. */
+  countBuyerRefusals(phone: string, sinceIso: string): Promise<number>;
+
+  addAudit(e: AuditEntry): Promise<void>;
+  listAudit(limit?: number): Promise<AuditEntry[]>;
+
+  /** Bot conversation state, so a deploy doesn't wipe a half-finished sale. */
+  getBotSession(key: string): Promise<unknown | undefined>;
+  setBotSession(key: string, value: unknown): Promise<void>;
+  deleteBotSession(key: string): Promise<void>;
+  /** Deletes bot sessions not touched since the given ISO time; returns how many. */
+  purgeBotSessions(olderThanIso: string): Promise<number>;
 }
 
 export interface Store extends Repo {

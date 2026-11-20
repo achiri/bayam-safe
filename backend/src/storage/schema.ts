@@ -80,6 +80,21 @@ CREATE TABLE IF NOT EXISTS float_topups (
   data       JSONB NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id    TEXT PRIMARY KEY,
+  at    TIMESTAMPTZ NOT NULL,
+  data  JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at DESC);
+
+CREATE TABLE IF NOT EXISTS bot_sessions (
+  key         TEXT PRIMARY KEY,
+  data        JSONB NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_buyer_refusals ON orders ((data->>'buyerPhone')) WHERE data ? 'buyerRefusalAt';
+
 CREATE TABLE IF NOT EXISTS media (
   id          TEXT PRIMARY KEY,
   order_id    TEXT NOT NULL REFERENCES orders(id),

@@ -1,6 +1,6 @@
 import { VersionConflictError } from '../domain/errors.js';
-import { FloatTopup, Journal, LedgerAccount, Media, Order, Rider, RiderStatus, User } from '../domain/types.js';
-import { assertBalanced, OrderQuery, Repo, Store } from './store.js';
+import { AuditEntry, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
+import { assertBalanced, OldestFirstCursor, OrderQuery, Repo, Store } from './store.js';
 
 const clone = <T>(v: T): T => structuredClone(v);
 
@@ -11,6 +11,9 @@ interface State {
   journals: Map<string, Journal>;
   events: Set<string>;
   topups: Map<string, FloatTopup>;
+  audit: AuditEntry[];
+  sessions: Map<string, unknown>;
+  sessionTimes: Map<string, string>;
 }
 
 const emptyState = (): State => ({
@@ -19,7 +22,10 @@ const emptyState = (): State => ({
   riders: new Map(),
   journals: new Map(),
   events: new Set(),
-  topups: new Map()
+  topups: new Map(),
+  audit: [],
+  sessions: new Map(),
+  sessionTimes: new Map()
 });
 
 function cloneState(s: State): State {
@@ -29,7 +35,10 @@ function cloneState(s: State): State {
     riders: new Map([...s.riders].map(([k, v]) => [k, clone(v)])),
     journals: new Map(s.journals),
     events: new Set(s.events),
-    topups: new Map([...s.topups].map(([k, v]) => [k, clone(v)]))
+    topups: new Map([...s.topups].map(([k, v]) => [k, clone(v)])),
+    audit: [...s.audit],
+    sessions: new Map(s.sessions),
+    sessionTimes: new Map(s.sessionTimes)
   };
 }
 
@@ -77,6 +86,16 @@ class MemoryRepo implements Repo {
       .filter((o) => !q.statuses || q.statuses.includes(o.status))
       .sort(byNewest)
       .slice(0, q.limit ?? 50)
+      .map(clone);
+  }
+  async listOrdersByStatusOldestFirst(statuses: OrderStatus[], limit: number, after?: OldestFirstCursor, opts: { withPaymentReference?: boolean } = {}) {
+    const cmp = (a: Order, b: Order) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id);
+    return [...this.state.orders.values()]
+      .filter((o) => statuses.includes(o.status))
+      .filter((o) => !opts.withPaymentReference || !!o.payment.reference)
+      .filter((o) => !after || o.updatedAt > after.updatedAt || (o.updatedAt === after.updatedAt && o.id > after.id))
+      .sort(cmp)
+      .slice(0, limit)
       .map(clone);
   }
   async listPendingExpired(now: string) {
@@ -179,6 +198,42 @@ class MemoryRepo implements Repo {
   async getMedia(id: string) {
     return this.media.get(id);
   }
+  async deleteMedia(id: string) {
+    this.media.delete(id);
+  }
+
+  async countBuyerRefusals(phone: string, sinceIso: string) {
+    return [...this.state.orders.values()].filter((o) => o.buyerPhone === phone && !!o.buyerRefusalAt && o.buyerRefusalAt >= sinceIso).length;
+  }
+  async addAudit(e: AuditEntry) {
+    this.state.audit.push(clone(e));
+  }
+  async listAudit(limit = 200) {
+    return [...this.state.audit].reverse().slice(0, limit).map(clone);
+  }
+  async getBotSession(key: string) {
+    const v = this.state.sessions.get(key);
+    return v === undefined ? undefined : clone(v);
+  }
+  async setBotSession(key: string, value: unknown) {
+    this.state.sessions.set(key, clone(value));
+    this.state.sessionTimes.set(key, new Date().toISOString());
+  }
+  async deleteBotSession(key: string) {
+    this.state.sessions.delete(key);
+    this.state.sessionTimes.delete(key);
+  }
+  async purgeBotSessions(olderThanIso: string) {
+    let n = 0;
+    for (const [k, at] of [...this.state.sessionTimes]) {
+      if (at < olderThanIso) {
+        this.state.sessions.delete(k);
+        this.state.sessionTimes.delete(k);
+        n++;
+      }
+    }
+    return n;
+  }
 }
 
 /**
@@ -215,6 +270,8 @@ export class MemoryStore implements Store {
   getOrderByTracking = (c: string) => this.repo.getOrderByTracking(c);
   getOrderByPaymentRef = (r: string) => this.repo.getOrderByPaymentRef(r);
   listOrders = (q: OrderQuery) => this.repo.listOrders(q);
+  listOrdersByStatusOldestFirst = (s: OrderStatus[], limit: number, after?: OldestFirstCursor, opts?: { withPaymentReference?: boolean }) =>
+    this.repo.listOrdersByStatusOldestFirst(s, limit, after, opts);
   listPendingExpired = (now: string) => this.repo.listPendingExpired(now);
   listOrdersWithPendingPayouts = () => this.repo.listOrdersWithPendingPayouts();
   getUser = (id: string) => this.repo.getUser(id);
@@ -230,6 +287,9 @@ export class MemoryStore implements Store {
   getTopup = (id: string) => this.repo.getTopup(id);
   getTopupByRef = (r: string) => this.repo.getTopupByRef(r);
   getMedia = (id: string) => this.repo.getMedia(id);
+  countBuyerRefusals = (p: string, since: string) => this.repo.countBuyerRefusals(p, since);
+  listAudit = (limit?: number) => this.repo.listAudit(limit);
+  getBotSession = (k: string) => this.repo.getBotSession(k);
 
   insertOrder = (o: Order) => this.tx((r) => r.insertOrder(o));
   updateOrder = (o: Order) => this.tx((r) => r.updateOrder(o));
@@ -242,4 +302,9 @@ export class MemoryStore implements Store {
   insertTopup = (t: FloatTopup) => this.tx((r) => r.insertTopup(t));
   updateTopup = (t: FloatTopup) => this.tx((r) => r.updateTopup(t));
   putMedia = (m: Media) => this.tx((r) => r.putMedia(m));
+  deleteMedia = (id: string) => this.tx((r) => r.deleteMedia(id));
+  addAudit = (e: AuditEntry) => this.tx((r) => r.addAudit(e));
+  setBotSession = (k: string, v: unknown) => this.tx((r) => r.setBotSession(k, v));
+  deleteBotSession = (k: string) => this.tx((r) => r.deleteBotSession(k));
+  purgeBotSessions = (t: string) => this.tx((r) => r.purgeBotSessions(t));
 }

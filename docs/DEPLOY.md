@@ -119,3 +119,20 @@ Things to confirm against Campay's current API docs during this phase: the field
 - A paid always-on instance (no sleeping), a production Postgres plan with backups, and `NODE_ENV=production` (the app then refuses simulated payments and demo data).
 - A live Campay account, and legal advice on holding customer funds in escrow (COBAC / BEAC rules on payment services).
 - A domain name (about 10 USD a year).
+
+---
+
+## After deploying the edge-case sprint (Sprint 1)
+
+This sprint adds no new environment variables. The new tables (sessions, audit journal and the rest) are created by the idempotent schema when the server starts, so there is no manual migration.
+
+1. Deploy as usual (see above). Check `/api/health` is OK and that Render's logs show no schema errors on start.
+2. Confirm the new background jobs are running. The server now schedules the timeouts job (every 5 min) and payment sync (every 2 min).
+3. Create a prepaid test order and cancel it before paying, then again after paying: the second one must refund in full (simulated or sandbox payments).
+4. Open an order as a rider, press "Client absent", and check the buyer gets the Telegram or checkout notice. Confirm "Retourner au vendeur" is refused before 15 minutes.
+5. In `/admin`, open a disputed order and check the resolve, split, reassign and resend-code actions appear, and that the action shows in the audit journal.
+6. Check `/earnings` and `/retrait` answer in the rider bot.
+7. Check the ledger (`/api/admin/ledger`) still sums to 0.
+8. Check that the landing page FAQ and the "Protection pour tous" block render in both French and English.
+
+Roll back by redeploying the previous version; the new tables are additive and harmless to the old code.

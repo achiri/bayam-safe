@@ -14,6 +14,17 @@ export type DomainEvent =
   | { type: 'order.status'; order: Order }
   | { type: 'order.rider_near'; order: Order; rider: Rider; distanceKm: number }
   | { type: 'order.buyer_linked'; order: Order }
+  | { type: 'order.buyer_confirmed'; order: Order }
+  | { type: 'order.stalled'; order: Order; hours: number }
+  | { type: 'rider.no_show'; order: Order; rider: Rider }
+  | { type: 'order.absence'; order: Order; side: 'BUYER' | 'SELLER' }
+  | { type: 'order.reassigned'; order: Order; rider: Rider }
+  | { type: 'order.code_resent'; order: Order; code: string }
+  | { type: 'order.address_changed'; order: Order; rider: Rider }
+  | { type: 'order.agency_fee_claim'; order: Order }
+  | { type: 'payout.delayed'; order: Order; payout: Payout }
+  | { type: 'payout_phone.requested'; user: User }
+  | { type: 'payout_phone.decided'; user: User; approved: boolean }
   | { type: 'order.disputed'; order: Order }
   | { type: 'order.payment_mismatch'; order: Order; paidAmount: number }
   | { type: 'payout.attention'; order: Order; payout: Payout }
@@ -21,7 +32,8 @@ export type DomainEvent =
   | { type: 'kyc.decided'; user: User }
   | { type: 'rider.applied'; rider: Rider }
   | { type: 'rider.decided'; rider: Rider }
-  | { type: 'topup.confirmed'; rider: Rider; topup: FloatTopup };
+  | { type: 'topup.confirmed'; rider: Rider; topup: FloatTopup }
+  | { type: 'topup.attention'; rider: Rider; topup: FloatTopup };
 
 type Handler = (e: DomainEvent) => void | Promise<void>;
 

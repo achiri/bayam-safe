@@ -1,4 +1,4 @@
-import { Bot, BotConfig, Context, InlineKeyboard, InputFile, Keyboard, SessionFlavor, session } from 'grammy';
+import { Bot, BotConfig, Context, InlineKeyboard, InputFile, Keyboard, SessionFlavor, StorageAdapter, session } from 'grammy';
 import { App } from '../app.js';
 import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError } from '../domain/errors.js';
@@ -8,6 +8,7 @@ import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../d
 import { DomainEvent } from '../services/events.js';
 import { esc, t } from '../i18n/locales.js';
 import { registerOnboarding } from './onboarding.js';
+import { x } from './strings.js';
 import { CANCELLABLE } from '../services/order.service.js';
 import { DISPUTABLE_STATUSES } from '../domain/order-state.js';
 
@@ -30,12 +31,17 @@ interface Draft {
   /** The seller's own rider for this sale. */
   riderCode?: string;
   riderName?: string;
+  recipientName?: string;
+  recipientPhone?: string;
 }
 
 type Flow =
-  | { kind: 'order'; step: 'title' | 'price' | 'fee' | 'agency' | 'dest' | 'agencyFee' | 'buyer' | 'pickup' | 'mode' | 'courier' | 'riderCode' | 'confirm'; d: Draft }
+  | { kind: 'order'; step: 'title' | 'price' | 'fee' | 'agency' | 'dest' | 'agencyFee' | 'buyer' | 'pickup' | 'mode' | 'courier' | 'riderCode' | 'recipientName' | 'recipientPhone' | 'confirm'; d: Draft }
   | { kind: 'assignRider'; orderId: string }
-  | { kind: 'waybill'; orderId: string; step: 'number' | 'photo'; number?: string }
+  | { kind: 'waybill'; orderId: string; step: 'number' | 'photo' | 'feeChoice' | 'feeAmount'; number?: string; photo?: string }
+  | { kind: 'pickupPhoto'; orderId: string }
+  | { kind: 'deliveryPhoto'; orderId: string }
+  | { kind: 'edit'; orderId: string; field: 'itemTitle' | 'itemPrice' | 'deliveryFee' | 'buyerPhone' }
   | { kind: 'code'; orderId: string }
   | { kind: 'problem'; orderId: string };
 
@@ -79,12 +85,83 @@ const destinationTerminal = (o: Order) => {
   return AGENCIES.find((a) => a.name === origin?.name && a.city === o.destinationCity);
 };
 
+/**
+ * Runs updates of the same chat one after the other (same key as the session), so two
+ * concurrent webhook deliveries can't read the same stored session and overwrite each other.
+ */
+function sequentializeByChat() {
+  const tails = new Map<string, Promise<unknown>>();
+  return async (ctx: Context, next: () => Promise<void>) => {
+    const key = ctx.chat?.id ?? ctx.from?.id;
+    if (key === undefined) return next();
+    const k = String(key);
+    const prev = tails.get(k) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(() => next());
+    const tail = run.catch(() => undefined);
+    tails.set(k, tail);
+    try {
+      await run;
+    } finally {
+      if (tails.get(k) === tail) tails.delete(k);
+    }
+  };
+}
+
+const COMMANDS: Record<Lang, Array<{ command: string; description: string }>> = {
+  fr: [
+    { command: 'menu', description: 'Menu principal' },
+    { command: 'orders', description: 'Mes commandes' },
+    { command: 'profile', description: 'Mon profil vendeur' },
+    { command: 'jobs', description: 'Mes courses (livreurs)' },
+    { command: 'earnings', description: 'Mes gains (livreurs)' },
+    { command: 'retrait', description: 'Retirer ma caution libre' },
+    { command: 'payout', description: 'Changer mon numéro de paiement' },
+    { command: 'verify', description: 'Vérifier un livreur' },
+    { command: 'lang', description: 'Langue' },
+    { command: 'help', description: 'Aide' }
+  ],
+  en: [
+    { command: 'menu', description: 'Main menu' },
+    { command: 'orders', description: 'My orders' },
+    { command: 'profile', description: 'My seller profile' },
+    { command: 'jobs', description: 'My jobs (riders)' },
+    { command: 'earnings', description: 'My earnings (riders)' },
+    { command: 'retrait', description: 'Withdraw free float' },
+    { command: 'payout', description: 'Change my payout number' },
+    { command: 'verify', description: 'Verify a rider' },
+    { command: 'lang', description: 'Language' },
+    { command: 'help', description: 'Help' }
+  ]
+};
+
 export function createBot(app: App, token: string, botConfig?: BotConfig<BotContext>): Bot<BotContext> {
   const bot = new Bot<BotContext>(token, botConfig);
   const { users, riders, orders, store, config } = app;
   const isAdmin = (id?: number) => !!id && config.ADMIN_TELEGRAM_IDS.includes(id);
 
-  bot.use(session({ initial: (): SessionData => ({}) }));
+  // Sessions live in the store (Postgres in production), so a restart doesn't wipe a half-finished sale.
+  const sessionStorage: StorageAdapter<SessionData> = {
+    read: async (key) => (await store.getBotSession(`tg:${key}`)) as SessionData | undefined,
+    write: async (key, value) => store.setBotSession(`tg:${key}`, value),
+    delete: async (key) => store.deleteBotSession(`tg:${key}`)
+  };
+  // Group/supergroup/channel chats: the bot is private-only (release codes, phone numbers, locations).
+  const groupNoticeAt = new Map<number, number>();
+  bot.use(async (ctx, next) => {
+    if (!ctx.chat || ctx.chat.type === 'private') return next();
+    if (ctx.callbackQuery) {
+      await ctx.answerCallbackQuery().catch(() => undefined);
+    } else if (ctx.message) {
+      const last = groupNoticeAt.get(ctx.chat.id) ?? 0;
+      if (Date.now() - last > 3600_000) {
+        if (groupNoticeAt.size > 1000) groupNoticeAt.clear();
+        groupNoticeAt.set(ctx.chat.id, Date.now());
+        await ctx.reply('Utilisez-moi en message privé.').catch(() => undefined);
+      }
+    }
+  });
+  bot.use(sequentializeByChat());
+  bot.use(session({ initial: (): SessionData => ({}), storage: sessionStorage }));
 
   // Resolve user + language for every update.
   bot.use(async (ctx, next) => {
@@ -126,17 +203,18 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     return ctx.user;
   };
 
-  const mainMenu = (s: Strings) =>
+  const mainMenu = (s: Strings, lang: Lang) =>
     new InlineKeyboard()
       .text(s.btnNewIntra, 'menu:new_intra').row()
       .text(s.btnNewInter, 'menu:new_inter').row()
+      .text(x(lang).btnRepeat, 'menu:repeat').row()
       .text(s.btnMyOrders, 'menu:orders').text(s.btnKyc, 'menu:kyc').row()
       .text(s.btnRider, 'menu:rider').text(s.btnLeaderboard, 'menu:leaderboard').row()
       .text(s.btnLang, 'menu:lang');
 
   const showMenu = async (ctx: BotContext) => {
     const u = ctx.user!;
-    await html(ctx, ctx.s.menuTitle(u.shopName, u.kycStatus === 'VERIFIED'), { reply_markup: mainMenu(ctx.s) });
+    await html(ctx, ctx.s.menuTitle(u.shopName, u.kycStatus === 'VERIFIED'), { reply_markup: mainMenu(ctx.s, ctx.lang) });
   };
 
   // ------------------------------------------------------------------ sign-up
@@ -202,7 +280,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     if (await requireUser(ctx)) await route(ctx);
   }));
 
-  bot.command('help', guard(async (ctx) => html(ctx, ctx.s.help)));
+  bot.command('help', guard(async (ctx) => html(ctx, ctx.s.help + x(ctx.lang).helpExtra)));
 
   bot.command('cancel', guard(async (ctx) => {
     ctx.session.flow = undefined;
@@ -245,11 +323,36 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         await html(ctx, ctx.s.mustCompleteProfile, { reply_markup: new InlineKeyboard().text(ctx.s.btnCompleteProfile, 'menu:profile_start') });
         return;
       }
+      if (u.suspendedAt) {
+        await html(ctx, x(ctx.lang).suspended(u.suspendNote));
+        return;
+      }
       ctx.session.flow = { kind: 'order', step: 'title', d: { type } };
       await html(ctx, ctx.s.askTitle);
     });
   bot.callbackQuery('menu:new_intra', startOrder('INTRA_CITY'));
   bot.callbackQuery('menu:new_inter', startOrder('INTER_CITY'));
+
+  /** Pre-fills the wizard from the seller's last order: only the buyer and pickup are asked again. */
+  bot.callbackQuery('menu:repeat', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    if (u.kycStatus === 'NONE' || u.kycStatus === 'REJECTED') {
+      await html(ctx, ctx.s.mustCompleteProfile, { reply_markup: new InlineKeyboard().text(ctx.s.btnCompleteProfile, 'menu:profile_start') });
+      return;
+    }
+    if (u.suspendedAt) return html(ctx, x(ctx.lang).suspended(u.suspendNote));
+    const [last] = await orders.listForMerchant(u.id, 1);
+    if (!last) return html(ctx, x(ctx.lang).noLastOrder);
+    const d: Draft = {
+      type: last.type, title: last.itemTitle, price: last.itemPrice, fee: last.deliveryFee,
+      agencyId: last.originAgencyId, dest: last.destinationCity, agencyFee: last.type === 'INTER_CITY' ? last.agencyFee : undefined
+    };
+    ctx.session.flow = { kind: 'order', step: 'buyer', d };
+    await html(ctx, x(ctx.lang).repeatReady(last.itemTitle));
+    await html(ctx, ctx.s.askBuyerPhone);
+  }));
 
   const listOrders = async (ctx: BotContext) => {
     const u = await requireUser(ctx);
@@ -321,11 +424,16 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
 
   // ------------------------------------------------------------------ merchant order actions
 
-  const merchantOrderKeyboard = (s: Strings, o: Order) => {
+  const merchantOrderKeyboard = (s: Strings, o: Order, lang: Lang = 'fr') => {
     const kb = new InlineKeyboard();
     if (CANCELLABLE.includes(o.status)) kb.text(s.btnCancelOrder, `m:cancel:${o.id}`).row();
     else if (DISPUTABLE_STATUSES.includes(o.status)) kb.text(s.btnCancelReturn, `m:cancel:${o.id}`).row();
     if (o.status === 'AT_AGENCY') kb.text(s.btnArrived, `m:arrived:${o.id}`).row();
+    if (o.status === 'DISPUTED' && o.dispute?.returnRequired && !o.dispute.returnReceivedAt) kb.text(x(lang).btnReturnReceived, `m:retok:${o.id}`).row();
+    const editable = (o.paymentMode === 'ESCROW' && o.status === 'PENDING_PAYMENT' && !o.payment.reference) || (o.paymentMode === 'COD' && o.status === 'AWAITING_RIDER');
+    if (editable) kb.text(x(lang).btnEdit, `m:edit:${o.id}`);
+    if (o.status === 'PENDING_PAYMENT' && !o.payment.confirmedAt) kb.text(x(lang).btnNewLink, `m:newlink:${o.id}`);
+    if (editable || o.status === 'PENDING_PAYMENT') kb.row();
     if (['PENDING_PAYMENT', 'AWAITING_RIDER'].includes(o.status)) {
       kb.text(s.btnAssignOwn, `m:own:${o.id}`);
       if (o.preferredRiderId) kb.text(s.btnOpenAll, `m:open:${o.id}`);
@@ -360,10 +468,60 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       `<b>${esc(o.trackingCode)}</b> — ${ctx.s.status(o.status)}`,
       `📦 ${esc(o.itemTitle)}`,
       `💰 ${ctx.s.money(o.total)} (${o.paymentMode === 'COD' ? 'cash' : 'escrow'})`,
+      o.recipientName || o.recipientPhone ? `👤 ${x(ctx.lang).recipientLine(o.recipientName, o.recipientPhone ?? o.buyerPhone)}` : '',
       o.waybillNumber ? `🧾 ${esc(o.waybillNumber)}` : '',
       ...o.payouts.filter((p) => p.kind === 'MERCHANT').map((p) => `💸 ${ctx.s.money(p.amount)} → ${p.status}`)
     ].filter(Boolean);
-    await html(ctx, lines.join('\n'), { reply_markup: merchantOrderKeyboard(ctx.s, o) });
+    await html(ctx, lines.join('\n'), { reply_markup: merchantOrderKeyboard(ctx.s, o, ctx.lang) });
+  }));
+
+  bot.callbackQuery(/^m:retok:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const o = await orders.sellerConfirmReturn(ctx.match[1], u.id);
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await html(ctx, x(ctx.lang).returnConfirmed(o.trackingCode));
+  }));
+
+  bot.callbackQuery(/^m:fee:(y|n):(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const approve = ctx.match[1] === 'y';
+    await orders.sellerDecideAgencyFee(ctx.match[2], u.id, approve);
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await html(ctx, x(ctx.lang).feeDecided(approve));
+  }));
+
+  bot.callbackQuery(/^m:newlink:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const { checkoutUrl } = await orders.rotateBuyerLink(ctx.match[1], u.id);
+    await html(ctx, x(ctx.lang).newLink(checkoutUrl));
+  }));
+
+  bot.callbackQuery(/^m:edit:(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const id = ctx.match[1];
+    const z = x(ctx.lang);
+    await html(ctx, z.editWhich, {
+      reply_markup: new InlineKeyboard()
+        .text(z.btnEditTitle, `m:editf:itemTitle:${id}`).text(z.btnEditPrice, `m:editf:itemPrice:${id}`).row()
+        .text(z.btnEditFee, `m:editf:deliveryFee:${id}`).text(z.btnEditBuyer, `m:editf:buyerPhone:${id}`)
+    });
+  }));
+
+  bot.callbackQuery(/^m:editf:(itemTitle|itemPrice|deliveryFee|buyerPhone):(.+)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    const field = ctx.match[1] as 'itemTitle' | 'itemPrice' | 'deliveryFee' | 'buyerPhone';
+    ctx.session.flow = { kind: 'edit', orderId: ctx.match[2], field };
+    const z = x(ctx.lang);
+    await html(ctx, { itemTitle: z.editAskTitle, itemPrice: z.editAskPrice, deliveryFee: z.editAskFee, buyerPhone: z.editAskBuyer }[field]);
   }));
 
   bot.callbackQuery(/^m:cancel:(.+)$/, guard(async (ctx) => {
@@ -412,8 +570,44 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await ctx.answerCallbackQuery();
     const f = ctx.session.flow;
     if (f?.kind !== 'order' || f.step !== 'mode') return;
+    if (ctx.match[1] === 'COD' && f.d.buyer && (await orders.buyerPrepaidOnly(f.d.buyer))) {
+      await html(ctx, x(ctx.lang).codBlocked);
+      return;
+    }
     f.d.mode = ctx.match[1] as PaymentMode;
     await askCourier(ctx);
+  }));
+
+  const askPickup = async (ctx: BotContext) => {
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order') return;
+    f.step = 'pickup';
+    const kb = new InlineKeyboard();
+    if (ctx.user?.shopLocation) kb.text(x(ctx.lang).btnShop, 'ord:pickup_shop');
+    await html(ctx, ctx.s.askPickup, kb.inline_keyboard.length ? { reply_markup: kb } : {});
+  };
+
+  const afterPickup = async (ctx: BotContext, d: Draft) => {
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order') return;
+    if (d.type === 'INTRA_CITY') {
+      f.step = 'mode';
+      return html(ctx, ctx.s.askPaymentMode, {
+        reply_markup: new InlineKeyboard().text(ctx.s.btnEscrow, 'ord:mode:ESCROW').row().text(ctx.s.btnCod, 'ord:mode:COD')
+      });
+    }
+    d.mode = 'ESCROW';
+    return askCourier(ctx);
+  };
+
+  bot.callbackQuery('ord:pickup_shop', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'pickup' || !ctx.user?.shopLocation) return;
+    f.d.pickup = `${ctx.user.shopName}, ${ctx.user.city}`;
+    f.d.pickupLocation = ctx.user.shopLocation;
+    await html(ctx, x(ctx.lang).shopPickupSet);
+    await afterPickup(ctx, f.d);
   }));
 
   const askCourier = async (ctx: BotContext) => {
@@ -457,7 +651,11 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         route: agency ? `${agency.name} ${agency.city} (${agency.terminalName}) → ${d.dest}` : undefined,
         rider: d.riderCode ? `${d.riderName} (${d.riderCode})` : undefined
       }),
-      { reply_markup: new InlineKeyboard().text(ctx.s.btnConfirm, 'ord:confirm').text(ctx.s.btnAbort, 'ord:abort').row().text(ctx.s.btnEditBuyer, 'ord:edit_buyer') }
+      {
+        reply_markup: new InlineKeyboard()
+          .text(ctx.s.btnConfirm, 'ord:confirm').text(ctx.s.btnAbort, 'ord:abort').row()
+          .text(ctx.s.btnEditBuyer, 'ord:edit_buyer').text(x(ctx.lang).btnRecipient, 'ord:recipient')
+      }
     );
   };
 
@@ -468,6 +666,29 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     f.d.backToSummary = true;
     f.step = 'buyer';
     await html(ctx, ctx.s.askBuyerPhone);
+  }));
+
+  bot.callbackQuery('ord:recipient', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'confirm') return;
+    const z = x(ctx.lang);
+    await html(ctx, z.askRecipientQ, {
+      reply_markup: new InlineKeyboard().text(z.btnRecipientSame, 'ord:recipient_same').text(z.btnRecipientOther, 'ord:recipient_other')
+    });
+  }));
+
+  bot.callbackQuery(/^ord:recipient_(same|other)$/, guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'order' || f.step !== 'confirm') return;
+    if (ctx.match[1] === 'same') {
+      f.d.recipientName = undefined;
+      f.d.recipientPhone = undefined;
+      return showSummary(ctx, f.d);
+    }
+    f.step = 'recipientName';
+    await html(ctx, x(ctx.lang).askRecipientName);
   }));
 
   bot.callbackQuery('ord:abort', guard(async (ctx) => {
@@ -494,7 +715,9 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       pickupLocation: d.pickupLocation,
       originAgencyId: d.agencyId,
       destinationCity: d.dest,
-      preferredRiderCode: d.riderCode
+      preferredRiderCode: d.riderCode,
+      recipientName: d.recipientName,
+      recipientPhone: d.recipientPhone
     });
     ctx.session.flow = undefined;
     const pitch = ctx.s.whatsappPitch(order.itemTitle, order.total, checkoutUrl);
@@ -506,6 +729,10 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   }));
 
   // ------------------------------------------------------------------ rider commands
+
+  async function earningsCmd(ctx: BotContext) {
+    await html(ctx, x(ctx.lang).earnings(await orders.riderEarnings(ctx.from!.id)));
+  }
 
   bot.command('on_duty', guard(async (ctx) => {
     await riders.setDuty(ctx.from!.id, true);
@@ -528,6 +755,24 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     const { topup, ussdCode } = await riders.requestTopup(ctx.from!.id, amount);
     await html(ctx, ctx.s.topupSent(topup.amount, ussdCode));
     if (app.gateway.name === 'simulated') await html(ctx, `🧪 Test mode reference: <code>${esc(topup.reference)}</code>`);
+  }));
+
+  bot.command('earnings', guard(earningsCmd));
+  bot.command('gains', guard(earningsCmd));
+
+  bot.command('retrait', guard(async (ctx) => {
+    const amount = parseAmount(String(ctx.match ?? ''));
+    if (!amount) return html(ctx, x(ctx.lang).withdrawUsage);
+    const res = await riders.withdrawFloat(ctx.from!.id, amount);
+    await html(ctx, res.message ? esc(res.message) : x(ctx.lang).withdrawSent(amount));
+  }));
+
+  bot.command('payout', guard(async (ctx) => {
+    if (!(await requireUser(ctx))) return;
+    const phone = String(ctx.match ?? '').trim();
+    if (!phone) return html(ctx, x(ctx.lang).payoutUsage);
+    await users.requestPayoutPhone(ctx.from!.id, phone);
+    await html(ctx, x(ctx.lang).payoutRequested);
   }));
 
   bot.command('jobs', guard(async (ctx) => {
@@ -559,13 +804,20 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
 
   // ------------------------------------------------------------------ rider job actions
 
-  const jobKeyboard = (s: Strings, o: Order, rider: Rider) => {
+  /** Buttons for a rider standing at the buyer's door. */
+  const doorButtons = (kb: InlineKeyboard, o: Order) => {
+    const z = x(o.buyerLang ?? 'fr');
+    kb.text(z.btnAbsent, `r:absent:${o.id}`).row().text(z.btnReturn, `r:retabs:${o.id}`).text(z.btnRefused, `r:refuse:${o.id}`).row();
+  };
+
+  const jobKeyboard = (s: Strings, o: Order, rider: Rider, lang: Lang) => {
     const kb = new InlineKeyboard();
     const first = o.firstMileRiderId === rider.id;
     const last = o.lastMileRiderId === rider.id;
     const dropoffRoute = o.dropoffLocation ? googleMapsRoute(o.dropoffLocation) : undefined;
     if (o.status === 'RIDER_ASSIGNED' && first) {
       kb.text(s.btnPickedUp, `r:pickup:${o.id}`).text(s.btnRelease, `r:release:${o.id}`).row();
+      kb.text(x(lang).btnSellerAbsent, `r:sabs:${o.id}`).row();
       if (o.pickupLocation) kb.url(s.btnMapsPickup, googleMapsRoute(o.pickupLocation)).row();
     } else if (o.status === 'IN_TRANSIT' && first) {
       if (o.type === 'INTER_CITY') {
@@ -575,6 +827,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       } else {
         kb.text(s.btnDeliver, `r:deliver:${o.id}`).row();
         if (dropoffRoute) kb.url(s.btnMapsDropoff, dropoffRoute).row();
+        doorButtons(kb, o);
       }
       kb.text(s.btnProblem, `r:problem:${o.id}`);
     } else if (o.status === 'LAST_MILE_ASSIGNED' && last) {
@@ -584,6 +837,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     } else if (o.status === 'OUT_FOR_DELIVERY' && last) {
       kb.text(s.btnDeliver, `r:deliver:${o.id}`).row();
       if (dropoffRoute) kb.url(s.btnMapsDropoff, dropoffRoute).row();
+      doorButtons(kb, o);
       kb.text(s.btnProblem, `r:problem:${o.id}`);
     }
     return kb;
@@ -606,7 +860,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         pickup,
         merchant: o.merchantName,
         merchantPhone: o.merchantPhone,
-        buyerPhone: showBuyer ? o.buyerPhone : undefined,
+        buyerPhone: showBuyer ? (o.recipientPhone || o.recipientName ? x(lang).recipientLine(o.recipientName, o.recipientPhone ?? o.buyerPhone) : o.buyerPhone) : undefined,
         dropoff: showBuyer ? o.dropoffAddress : undefined,
         landmark: showBuyer ? o.landmark : undefined,
         collect: showBuyer && o.paymentMode === 'COD' ? o.total : undefined,
@@ -614,7 +868,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         dest: o.destinationCity,
         waybill: o.waybillNumber
       }),
-      { parse_mode: 'HTML', reply_markup: jobKeyboard(s, o, rider), link_preview_options: { is_disabled: true } }
+      { parse_mode: 'HTML', reply_markup: jobKeyboard(s, o, rider, lang), link_preview_options: { is_disabled: true } }
     );
     if (showBuyer && o.voiceNoteId && ['RIDER_ASSIGNED', 'LAST_MILE_ASSIGNED'].includes(o.status)) {
       const media = await orders.getVoiceNote(o);
@@ -655,10 +909,83 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await html(ctx, ctx.s.mStatus(o.trackingCode, ctx.s.status(o.status)));
   }));
 
+  // A photo of the parcel is required at pickup: the photo message completes the pickup.
   bot.callbackQuery(/^r:pickup:(.+)$/, riderAction(async (ctx, id) => {
-    const o = await orders.confirmPickup(ctx.from!.id, id);
-    const r = await riders.requireApproved(ctx.from!.id);
-    await sendJobCard(ctx.from!.id, o, r, ctx.lang);
+    await riders.requireApproved(ctx.from!.id);
+    ctx.session.flow = { kind: 'pickupPhoto', orderId: id };
+    await html(ctx, x(ctx.lang).askPickupPhoto);
+  }));
+
+  bot.callbackQuery(/^r:absent:(.+)$/, riderAction(async (ctx, id) => {
+    await orders.riderReportBuyerAbsent(ctx.from!.id, id);
+    await html(ctx, x(ctx.lang).absentSent);
+  }));
+
+  bot.callbackQuery(/^r:retabs:(.+)$/, riderAction(async (ctx, id) => {
+    try {
+      const o = await orders.riderReturnParcel(ctx.from!.id, id, 'ABSENT');
+      await ctx.editMessageReplyMarkup().catch(() => undefined);
+      await html(ctx, x(ctx.lang).returnOpened(o.trackingCode));
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'KEEP_WAITING') return void (await html(ctx, x(ctx.lang).keepWaiting(e.message)));
+      throw e;
+    }
+  }));
+
+  const confirmKb = (yes: string, ctx: BotContext) =>
+    new InlineKeyboard().text(x(ctx.lang).btnYes, yes).text(x(ctx.lang).btnNo, 'r:no');
+
+  bot.callbackQuery(/^r:refuse:(.+)$/, riderAction(async (ctx, id) => {
+    await html(ctx, x(ctx.lang).confirmRefused, { reply_markup: confirmKb(`r:refuse_y:${id}`, ctx) });
+  }));
+  bot.callbackQuery(/^r:refuse_y:(.+)$/, riderAction(async (ctx, id) => {
+    const o = await orders.riderReturnParcel(ctx.from!.id, id, 'REFUSED');
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await html(ctx, x(ctx.lang).returnOpened(o.trackingCode));
+  }));
+
+  bot.callbackQuery(/^r:sabs:(.+)$/, riderAction(async (ctx, id) => {
+    await html(ctx, x(ctx.lang).confirmSellerAbsent, { reply_markup: confirmKb(`r:sabs_y:${id}`, ctx) });
+  }));
+  bot.callbackQuery(/^r:sabs_y:(.+)$/, riderAction(async (ctx, id) => {
+    await orders.riderReportSellerAbsent(ctx.from!.id, id);
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await html(ctx, x(ctx.lang).sellerAbsentDone);
+  }));
+
+  bot.callbackQuery('r:no', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await html(ctx, x(ctx.lang).cancelledAction);
+  }));
+
+  bot.callbackQuery('r:skipphoto', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (ctx.session.flow?.kind === 'deliveryPhoto') ctx.session.flow = undefined;
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+  }));
+
+  /** Agency fee step of the inter-city drop-off. */
+  const finishDropoff = async (ctx: BotContext, f: Extract<Flow, { kind: 'waybill' }>, actualFee?: number) => {
+    const o = await orders.recordAgencyDropoff(ctx.from!.id, f.orderId, f.number!, f.photo!, actualFee);
+    ctx.session.flow = undefined;
+    await html(ctx, ctx.s.mStatus(o.trackingCode, ctx.s.status(o.status)));
+    if (o.agencyFeeClaim?.status === 'PENDING') await html(ctx, x(ctx.lang).agencyFeeClaimSent(o.agencyFeeClaim.amount));
+  };
+  bot.callbackQuery('r:feeok', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'waybill' || f.step !== 'feeChoice') return;
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await finishDropoff(ctx, f);
+  }));
+  bot.callbackQuery('r:feeother', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const f = ctx.session.flow;
+    if (f?.kind !== 'waybill' || f.step !== 'feeChoice') return;
+    f.step = 'feeAmount';
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await html(ctx, x(ctx.lang).askAgencyFeeAmount);
   }));
 
   bot.callbackQuery(/^r:agency:(.+)$/, riderAction(async (ctx, id) => {
@@ -724,9 +1051,27 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   const onPhoto = async (ctx: BotContext, fileId: string) => {
     const f = ctx.session.flow;
     if (f?.kind === 'waybill' && f.step === 'photo' && f.number) {
-      const o = await orders.recordAgencyDropoff(ctx.from!.id, f.orderId, f.number, fileId);
+      f.photo = fileId;
+      f.step = 'feeChoice';
+      const o = await orders.get(f.orderId);
+      const z = x(ctx.lang);
+      await html(ctx, z.askAgencyFeePaid(o?.agencyFee ?? 0), {
+        reply_markup: new InlineKeyboard().text(z.btnFeeSame, 'r:feeok').row().text(z.btnFeeOther, 'r:feeother')
+      });
+      return;
+    }
+    if (f?.kind === 'pickupPhoto') {
+      const o = await orders.confirmPickup(ctx.from!.id, f.orderId, fileId);
       ctx.session.flow = undefined;
-      await html(ctx, ctx.s.mStatus(o.trackingCode, ctx.s.status(o.status)));
+      const r = await riders.requireApproved(ctx.from!.id);
+      await sendJobCard(ctx.from!.id, o, r, ctx.lang);
+      if ((o.type === 'INTRA_CITY' && o.status === 'IN_TRANSIT') || o.status === 'OUT_FOR_DELIVERY') await html(ctx, x(ctx.lang).liveLocationReminder);
+      return;
+    }
+    if (f?.kind === 'deliveryPhoto') {
+      await orders.setDeliveryPhoto(ctx.from!.id, f.orderId, fileId);
+      ctx.session.flow = undefined;
+      await html(ctx, x(ctx.lang).deliveryPhotoSaved);
       return;
     }
     await onboarding.handlePhoto(ctx, fileId);
@@ -794,8 +1139,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
             d.backToSummary = false;
             return showSummary(ctx, d);
           }
-          f.step = 'pickup';
-          return html(ctx, s.askPickup);
+          return askPickup(ctx);
         }
         if (f.step === 'riderCode') {
           const card = await riders.verifyCode(text);
@@ -806,14 +1150,18 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         }
         if (f.step === 'pickup') {
           d.pickup = text;
-          if (d.type === 'INTRA_CITY') {
-            f.step = 'mode';
-            return html(ctx, s.askPaymentMode, {
-              reply_markup: new InlineKeyboard().text(s.btnEscrow, 'ord:mode:ESCROW').row().text(s.btnCod, 'ord:mode:COD')
-            });
-          }
-          d.mode = 'ESCROW';
-          return askCourier(ctx);
+          return afterPickup(ctx, d);
+        }
+        if (f.step === 'recipientName') {
+          if (text.length < 2 || text.length > 80) return html(ctx, x(ctx.lang).askRecipientName);
+          d.recipientName = text;
+          f.step = 'recipientPhone';
+          return html(ctx, x(ctx.lang).askRecipientPhone);
+        }
+        if (f.step === 'recipientPhone') {
+          if (!isValidContactPhone(text)) return html(ctx, x(ctx.lang).askRecipientPhone);
+          d.recipientPhone = text;
+          return showSummary(ctx, d);
         }
         return;
       }
@@ -823,13 +1171,40 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
           f.step = 'photo';
           return html(ctx, s.askWaybillPhoto);
         }
+        if (f.step === 'feeAmount') {
+          const n = parseAmount(text);
+          if (n === undefined) return html(ctx, s.invalidNumber);
+          return finishDropoff(ctx, f, n);
+        }
+        if (f.step === 'feeChoice') return;
         return html(ctx, s.askWaybillPhoto);
+      }
+      case 'pickupPhoto':
+        return html(ctx, x(ctx.lang).needPickupPhoto);
+      case 'deliveryPhoto':
+        ctx.session.flow = undefined;
+        return;
+      case 'edit': {
+        const u = await requireUser(ctx);
+        if (!u) return;
+        const patch: Record<string, string | number> = {};
+        if (f.field === 'itemPrice' || f.field === 'deliveryFee') {
+          const n = parseAmount(text);
+          if (n === undefined || (f.field === 'itemPrice' && n < 100)) return html(ctx, s.invalidNumber);
+          patch[f.field] = n;
+        } else {
+          patch[f.field] = text;
+        }
+        const o = await orders.editBeforePayment(f.orderId, u, patch);
+        ctx.session.flow = undefined;
+        return html(ctx, x(ctx.lang).editDone(o.trackingCode), { reply_markup: merchantOrderKeyboard(s, o, ctx.lang) });
       }
       case 'code': {
         const res = await orders.deliver(ctx.from.id, f.orderId, text);
         if (res.ok) {
-          ctx.session.flow = undefined;
-          return html(ctx, s.delivered);
+          ctx.session.flow = { kind: 'deliveryPhoto', orderId: f.orderId };
+          await html(ctx, s.delivered);
+          return html(ctx, x(ctx.lang).askDeliveryPhoto, { reply_markup: new InlineKeyboard().text(x(ctx.lang).btnSkip, 'r:skipphoto') });
         }
         if (res.order.status === 'DISPUTED') {
           ctx.session.flow = undefined;
@@ -852,6 +1227,14 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     }
   }));
 
+  // Command menu (French default, English for English clients). Never fails startup.
+  if (config.NODE_ENV !== 'test') {
+    void (async () => {
+      await bot.api.setMyCommands(COMMANDS.fr);
+      await bot.api.setMyCommands(COMMANDS.en, { language_code: 'en' });
+    })().catch((e) => console.warn('[bot] could not set the command menu:', (e as Error).message));
+  }
+
   bot.catch((err) => console.error('[bot] unhandled error:', err.error));
 
   // ------------------------------------------------------------------ notifications
@@ -867,6 +1250,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   const toAdmins = (text: string, extra: Record<string, unknown> = {}) =>
     Promise.all(config.ADMIN_TELEGRAM_IDS.map((id) => send(id, text, extra)));
   const merchantOf = async (o: Order) => store.getUser(o.merchantId);
+  const langOfUser = async (userId: string): Promise<Lang> => (await store.getUser(userId))?.lang ?? 'fr';
 
   /** Message to the buyer's Telegram, if they follow the order. */
   const toBuyer = async (o: Order, build: (s: Strings) => string, where = false) => {
@@ -944,6 +1328,17 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         return;
       case 'order.buyer_linked':
         return;
+      case 'order.buyer_confirmed': {
+        // Fallback confirmation without the rider's code: tell everyone who could object.
+        const o = e.order;
+        const riderId = o.type === 'INTER_CITY' ? o.lastMileRiderId : o.firstMileRiderId;
+        const r = riderId ? await store.getRider(riderId) : undefined;
+        if (r) await send(r.telegramId, `ℹ️ Le client a confirmé la réception de <code>${esc(o.trackingCode)}</code> sans votre code. Si ce n’est pas vrai, contactez le support.`);
+        const m = await merchantOf(o);
+        if (m) await send(m.telegramId, `ℹ️ Le client a confirmé la réception de <code>${esc(o.trackingCode)}</code> (sans le code du livreur).`);
+        await toAdmins(`ℹ️ Réception confirmée par le client sur <code>${esc(o.trackingCode)}</code> (sans code livreur).`);
+        return;
+      }
       case 'order.paid': {
         await toBuyer(e.order, (s) => s.bPaid);
         const code = orders.releaseCodeForTelegram(e.order);
@@ -976,7 +1371,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       }
       case 'order.no_riders': {
         const m = await merchantOf(e.order);
-        if (m) await send(m.telegramId, t(m.lang).mNoRiders(e.order.trackingCode), { reply_markup: merchantOrderKeyboard(t(m.lang), e.order) });
+        if (m) await send(m.telegramId, t(m.lang).mNoRiders(e.order.trackingCode), { reply_markup: merchantOrderKeyboard(t(m.lang), e.order, m.lang) });
         await toBuyer(e.order, (s) => s.bNoRiders);
         await toAdmins(`🚨 No rider for <code>${esc(e.order.trackingCode)}</code> (${e.leg} leg)`);
         return;
@@ -1001,7 +1396,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
           await send(m.telegramId, s.mCancelledByBuyer(o.trackingCode, o.itemTitle));
           return;
         }
-        await send(m.telegramId, s.mStatus(o.trackingCode, s.status(o.status)), { reply_markup: merchantOrderKeyboard(s, o) });
+        await send(m.telegramId, s.mStatus(o.trackingCode, s.status(o.status)), { reply_markup: merchantOrderKeyboard(s, o, m.lang) });
         return;
       }
       case 'order.disputed': {
@@ -1009,7 +1404,13 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         const o = e.order;
         const reason = o.dispute?.reason ?? '';
         const m = await merchantOf(o);
-        if (m) await send(m.telegramId, t(m.lang).mDisputed(o.trackingCode, reason));
+        if (m && o.dispute?.returnRequired && !o.dispute.returnReceivedAt) {
+          await send(m.telegramId, x(m.lang).returnNeeded(o.trackingCode, reason), {
+            reply_markup: new InlineKeyboard().text(x(m.lang).btnReturnReceived, `m:retok:${o.id}`)
+          });
+        } else if (m) {
+          await send(m.telegramId, t(m.lang).mDisputed(o.trackingCode, reason));
+        }
         await toAdmins(`⚠️ Dispute on <code>${esc(o.trackingCode)}</code> by ${esc(o.dispute?.openedBy)}: ${esc(reason)}\nOrder id: <code>${o.id}</code>`);
         return;
       }
@@ -1063,6 +1464,95 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         await send(r.telegramId, text);
         return;
       }
+      case 'order.stalled': {
+        if (e.order.status !== 'AWAITING_RIDER') {
+          // Parcel stuck mid-route, at a hub, or a return that never came back: an admin follows up.
+          await toAdmins(`⏳ Order <code>${e.order.trackingCode}</code> stuck in ${e.order.status} for ${e.hours} h+ — please check.`);
+          return;
+        }
+        const m = await merchantOf(e.order);
+        if (m) await send(m.telegramId, x(m.lang).sStalled(e.order.trackingCode, e.hours));
+        await toBuyer(e.order, () => x(e.order.buyerLang ?? 'fr').bStalled(e.order.trackingCode, e.hours));
+        return;
+      }
+      case 'rider.no_show': {
+        const lang = await langOfUser(e.rider.userId);
+        await send(e.rider.telegramId, x(lang).riderNoShow(e.order.trackingCode));
+        const m = await merchantOf(e.order);
+        if (m) await send(m.telegramId, x(m.lang).sellerNoShow(e.order.trackingCode));
+        return;
+      }
+      case 'order.absence': {
+        const o = e.order;
+        const m = await merchantOf(o);
+        if (e.side === 'BUYER') {
+          await toBuyer(o, () => x(o.buyerLang ?? 'fr').bAbsent);
+          if (m) await send(m.telegramId, x(m.lang).sBuyerAbsent(o.trackingCode));
+        } else if (m) {
+          await send(m.telegramId, x(m.lang).sSellerAbsent(o.trackingCode));
+          if ((m.absentAtPickup ?? 0) >= 2) await toAdmins(x('en').adminSellerAbsent(m.shopName, m.absentAtPickup ?? 0, o.trackingCode));
+        }
+        return;
+      }
+      case 'order.reassigned': {
+        const lang = await langOfUser(e.rider.userId);
+        await send(e.rider.telegramId, x(lang).newJobForYou);
+        await sendJobCard(e.rider.telegramId, e.order, e.rider, lang);
+        return;
+      }
+      case 'order.code_resent':
+        if (e.order.buyerTelegramId) await send(e.order.buyerTelegramId, t(e.order.buyerLang ?? 'fr').bCode(e.code));
+        return;
+      case 'order.address_changed': {
+        const lang = await langOfUser(e.rider.userId);
+        await send(e.rider.telegramId, x(lang).addressChanged(e.order.trackingCode, e.order.dropoffAddress ?? '', e.order.landmark));
+        if (e.order.dropoffLocation && bot.isInited()) await bot.api.sendLocation(e.rider.telegramId, e.order.dropoffLocation.lat, e.order.dropoffLocation.lng).catch(() => undefined);
+        return;
+      }
+      case 'order.agency_fee_claim': {
+        const o = e.order;
+        const claim = o.agencyFeeClaim;
+        if (!claim) return;
+        if (claim.status === 'PENDING') {
+          const m = await merchantOf(o);
+          if (m) {
+            await send(m.telegramId, x(m.lang).feeClaim(o.trackingCode, o.agencyFee, claim.amount), {
+              reply_markup: new InlineKeyboard().text(x(m.lang).btnFeeApprove, `m:fee:y:${o.id}`).text(x(m.lang).btnFeeReject, `m:fee:n:${o.id}`)
+            });
+          }
+          return;
+        }
+        const r = o.firstMileRiderId ? await store.getRider(o.firstMileRiderId) : undefined;
+        if (!r) return;
+        const lang = await langOfUser(r.userId);
+        await send(r.telegramId, claim.status === 'APPROVED' ? x(lang).agencyFeeApprovedRider(o.trackingCode, claim.amount) : x(lang).agencyFeeRejectedRider(o.trackingCode));
+        return;
+      }
+      case 'payout.delayed': {
+        const o = e.order;
+        if (e.payout.kind === 'MERCHANT') {
+          const m = await merchantOf(o);
+          if (m) await send(m.telegramId, x(m.lang).payoutDelayed(o.trackingCode));
+          return;
+        }
+        const riderId = e.payout.kind === 'FIRST_MILE_RIDER' ? o.firstMileRiderId : e.payout.kind === 'LAST_MILE_RIDER' ? o.lastMileRiderId : undefined;
+        const r = riderId ? await store.getRider(riderId) : undefined;
+        if (r) await send(r.telegramId, x(await langOfUser(r.userId)).payoutDelayed(o.trackingCode));
+        return;
+      }
+      case 'payout_phone.requested':
+        await toAdmins(x('en').payoutPhoneRequested(e.user.fullName, e.user.pendingPayoutPhone ?? '', e.user.id));
+        return;
+      case 'payout_phone.decided':
+        await send(e.user.telegramId, x(e.user.lang).payoutPhoneDecided(e.approved, e.user.payoutPhone));
+        return;
+      case 'topup.attention':
+        await toAdmins(
+          `🏦 Retrait livreur à vérifier : ${e.topup.amount} FCFA → ${esc(e.topup.phone)} (livreur ${esc(e.rider.riderCode)}), statut ${e.topup.status}. ` +
+            `Le solde reste débité. Vérifiez le tableau de bord Campay avant tout remboursement.
+Retrait <code>${e.topup.id}</code>`
+        );
+        return;
       case 'topup.confirmed': {
         const u = await store.getUser(e.rider.userId);
         await send(e.rider.telegramId, t(u?.lang ?? 'fr').topupConfirmed(e.topup.amount, e.rider.floatBalance));

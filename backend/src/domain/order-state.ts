@@ -12,7 +12,8 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   LAST_MILE_ASSIGNED: ['OUT_FOR_DELIVERY', 'AT_DESTINATION_HUB', 'DISPUTED'],
   OUT_FOR_DELIVERY: ['DELIVERED', 'DISPUTED'],
   DELIVERED: ['SETTLED'],
-  DISPUTED: ['REFUNDED', 'DELIVERED'],
+  // An admin can also resume a frozen order where it stopped (e.g. a code typo lock-out).
+  DISPUTED: ['REFUNDED', 'DELIVERED', 'IN_TRANSIT', 'AT_AGENCY', 'AT_DESTINATION_HUB', 'LAST_MILE_ASSIGNED', 'OUT_FOR_DELIVERY'],
   SETTLED: [],
   REFUNDED: [],
   CANCELLED: [],

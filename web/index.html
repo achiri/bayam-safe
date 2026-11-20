@@ -423,6 +423,48 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
     </div>
   </section>
 
+  <section id="protection" style="padding-top:0">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="eyebrow" data-i18n="prot_eyebrow">Garanties</span>
+        <h2 data-i18n="prot_h2">Protection pour tous</h2>
+        <p class="lede" data-i18n="prot_lede">Des règles claires, appliquées par le système et pas au cas par cas. Chacun sait ce qui se passe quand quelque chose tourne mal.</p>
+      </div>
+      <div class="feature-grid">
+        <article class="feature">
+          <h3 data-i18n="pt1_t">Acheteur : remboursé si le colis ne part pas</h3>
+          <ul class="muted" style="margin:0;padding-left:20px;display:grid;gap:8px">
+            <li data-i18n="pt1_a">L’argent reste sous clé jusqu’à votre code.</li>
+            <li data-i18n="pt1_b">Vous annulez avant le ramassage : remboursement intégral.</li>
+            <li data-i18n="pt1_c">Aucun livreur en 48 h : remboursement automatique.</li>
+            <li data-i18n="pt1_d">Paiement en double ou au mauvais montant : renvoyé automatiquement.</li>
+            <li data-i18n="pt1_e">Suivi en direct et code par Telegram.</li>
+          </ul>
+        </article>
+        <article class="feature">
+          <h3 data-i18n="pt2_t">Vendeur : payé, ou colis récupéré</h3>
+          <ul class="muted" style="margin:0;padding-left:20px;display:grid;gap:8px">
+            <li data-i18n="pt2_a">En paiement d’avance, le colis ne part que si le client a déjà payé.</li>
+            <li data-i18n="pt2_b">Client absent ou refus : le colis vous revient avant tout remboursement.</li>
+            <li data-i18n="pt2_c">Après 2 refus en cash en 90 jours, ce client doit payer d’avance.</li>
+            <li data-i18n="pt2_d">Pas de blocage de vos versements parce que vous êtes nouveau.</li>
+            <li data-i18n="pt2_e">Vous pouvez imposer votre propre livreur.</li>
+          </ul>
+        </article>
+        <article class="feature">
+          <h3 data-i18n="pt3_t">Livreur : payé pour chaque trajet fait</h3>
+          <ul class="muted" style="margin:0;padding-left:20px;display:grid;gap:8px">
+            <li data-i18n="pt3_a">Vendeur absent au ramassage : aucune pénalité pour vous.</li>
+            <li data-i18n="pt3_b">Le vendeur annule après votre acceptation : vous recevez la moitié des frais de livraison.</li>
+            <li data-i18n="pt3_c">Client absent ou refus sur une commande prépayée : vos trajets sont payés quand même.</li>
+            <li data-i18n="pt3_d">Pas de caution pour les commandes payées d’avance.</li>
+            <li data-i18n="pt3_e">3 courses actives au maximum, pour rester serein.</li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <section style="padding-top:0">
     <div class="wrap">
       <div class="section-head">
@@ -499,6 +541,8 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
           <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd1"><b>Les courses viennent à vous</b>Partagez votre position, le bot vous propose les colis les plus proches.</span></li>
           <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd2"><b>Payé sur votre MoMo / OM</b>Dès que le client donne son code, votre course part sur votre téléphone.</span></li>
           <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd3"><b>Inscription en 3 minutes dans Telegram</b>Votre selfie, votre CNI, votre plaque. On vérifie, et vous roulez.</span></li>
+          <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd4"><b>Suivez vos gains</b>Voyez vos gains de la semaine, du mois et en attente avec /gains, et retirez votre caution disponible avec /retrait.</span></li>
+          <li><svg width="24" height="24" aria-hidden="true" style="color:#F2B705"><use href="#check"></use></svg><span data-i18n-html="rd5"><b>Pas de caution pour les courses prépayées</b>La caution ne sert qu’au cash à la livraison. Pour les commandes payées d’avance, vous roulez sans rien bloquer.</span></li>
         </ul>
         <a class="btn btn-gold js-rider" href="#commencer"><svg width="20" height="20" aria-hidden="true"><use href="#tg"></use></svg><span data-i18n="cta_rider">Devenir livreur</span></a>
       </div>
@@ -518,7 +562,14 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       <div class="section-head"><span class="eyebrow">FAQ</span><h2 data-i18n="faq_h2">Vos questions</h2></div>
       <div class="faq">
         <details><summary data-i18n="q1">Où est l’argent pendant la livraison ?</summary><p data-i18n="a1">Il est encaissé par notre prestataire de paiement Mobile Money et enregistré dans le compte de séquestre de la commande. Personne ne peut le toucher tant que le client n’a pas donné son code ou qu’un litige n’est pas tranché.</p></details>
-        <details><summary data-i18n="q2">Que se passe-t-il si le client refuse le colis ?</summary><p data-i18n="a2">La commande passe en litige et l’argent reste bloqué. Notre équipe écoute les deux côtés. Si le colis était conforme, vous êtes payé ; sinon le client est remboursé, et le livreur garde le prix des trajets qu’il a vraiment faits.</p></details>
+        <details><summary data-i18n="q2">Que se passe-t-il si le client refuse le colis ?</summary><p data-i18n="a2">Le livreur le signale et rapporte le colis au vendeur. Quand le vendeur confirme avoir récupéré le colis, le client est remboursé automatiquement, moins le prix des trajets que les livreurs ont vraiment faits. En cas de désaccord sur l’état du colis, un litige est ouvert, l’argent reste bloqué et notre équipe tranche après avoir écouté les deux côtés.</p></details>
+        <details><summary data-i18n="q7">Puis-je annuler une commande, et serai-je remboursé ?</summary><p data-i18n="a7">Oui, le vendeur comme l’acheteur, tant que le livreur n’a pas récupéré le colis. Avant paiement, il n’y a rien à rembourser. Après paiement et avant le ramassage, l’acheteur est remboursé en totalité. Une commande payée ne peut être annulée par l’acheteur que depuis le téléphone qui a payé. Une fois le colis récupéré, il doit d’abord retourner chez le vendeur.</p></details>
+        <details><summary data-i18n="q8">Et si le vendeur annule quand le livreur est déjà en route ?</summary><p data-i18n="a8">L’acheteur est toujours remboursé en totalité. Le livreur qui avait déjà accepté la course reçoit la moitié des frais de livraison. Cette somme est payée par le vendeur : elle est retenue sur ses prochains versements.</p></details>
+        <details><summary data-i18n="q9">Puis-je utiliser mon propre livreur ?</summary><p data-i18n="a9">Oui. À la création de la commande, indiquez le numéro livreur de votre livreur (BSR-XXXX, visible sur sa carte). Seule cette personne reçoit la course, quelle que soit sa position. S’il ne vient pas chercher le colis dans les 45 minutes, la course est ouverte à tous les livreurs. Il doit être inscrit et approuvé sur BayamSafe.</p></details>
+        <details><summary data-i18n="q10">Puis-je suivre la livraison et recevoir mon code sur Telegram ?</summary><p data-i18n="a10">Oui. Sur la page de paiement, appuyez sur « Suivre ma commande sur Telegram » : vous recevez les étapes et votre code de libération dans Telegram. Pendant la dernière étape, la page affiche la position du livreur, la distance et le temps estimé. Si vous perdez votre code, le support peut le renvoyer sur votre Telegram après vérification.</p></details>
+        <details><summary data-i18n="q11">Et si le client est absent ou injoignable à la livraison ?</summary><p data-i18n="a11">Le livreur appuie sur « Client absent » : le client est prévenu et dispose de 15 minutes. Passé ce délai, le livreur ramène le colis au vendeur et le client est remboursé, moins les trajets déjà faits. Pour le cash à la livraison, 2 refus ou absences en 90 jours obligent ce numéro à payer d’avance.</p></details>
+        <details><summary data-i18n="q12">Et si aucun livreur n’est trouvé ?</summary><p data-i18n="a12">Le vendeur et l’acheteur sont prévenus à 6 h puis à 24 h. Au bout de 48 h sans livreur, l’acheteur est remboursé automatiquement en totalité (ou la commande est annulée si elle devait être payée en cash). Un livreur qui accepte mais ne vient pas au bout de 45 minutes est remplacé.</p></details>
+        <details><summary data-i18n="q13">Et si je paie deux fois, ou le mauvais montant ?</summary><p data-i18n="a13">Un paiement en double, en retard ou d’un mauvais montant est renvoyé automatiquement au numéro qui a payé. Vous n’avez rien à demander.</p></details>
         <details><summary data-i18n="q3">Quand est-ce que je reçois mon argent ?</summary><p data-i18n="a3">Le versement vers votre MTN MoMo ou Orange Money part automatiquement dès que le livreur saisit le bon code du client.</p></details>
         <details><summary data-i18n="q4">Le vendeur peut-il voir le code du client ?</summary><p data-i18n="a4">Non. Le code s’affiche uniquement sur le téléphone qui a fait le paiement. Ni le vendeur ni le livreur ne peuvent le voir.</p></details>
         <details><summary data-i18n="q5">Mon client n’a pas Telegram. C’est un problème ?</summary><p data-i18n="a5">Non. Seuls le vendeur et le livreur utilisent Telegram. Votre client reçoit un simple lien (par WhatsApp, SMS, Messenger) qui s’ouvre dans n’importe quel navigateur.</p></details>
@@ -595,8 +646,24 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
     rd3: '<b>Sign up in 3 minutes in Telegram</b>Your selfie, your ID, your plate. We check, and you ride.',
     badge_title: 'Verified rider', badge_photo: '[Your photo]', badge_name: '[Your name]', badge_plate: 'Plate', badge_id: 'Rider no.', badge_verify: 'Verifiable in the bot',
     faq_h2: 'Your questions',
+    prot_eyebrow: 'Guarantees', prot_h2: 'Protection for everyone', prot_lede: 'Clear rules applied by the system, not case by case. Everyone knows what happens when something goes wrong.',
+    pt1_t: 'Buyer: refunded if the parcel doesn’t leave',
+    pt1_a: 'The money stays locked until your code.', pt1_b: 'You cancel before pickup: full refund.', pt1_c: 'No rider within 48 h: automatic refund.', pt1_d: 'Double payment or wrong amount: sent back automatically.', pt1_e: 'Live tracking and your code on Telegram.',
+    pt2_t: 'Seller: paid, or parcel back',
+    pt2_a: 'On prepaid orders, the parcel only leaves if the buyer has already paid.', pt2_b: 'Buyer absent or refuses: the parcel comes back to you before any refund.', pt2_c: 'After 2 cash refusals in 90 days, that buyer must pay upfront.', pt2_d: 'No payout hold just because you are new.', pt2_e: 'You can insist on your own rider.',
+    pt3_t: 'Rider: paid for every trip made',
+    pt3_a: 'Seller absent at pickup: no penalty for you.', pt3_b: 'Seller cancels after you accepted: you get half the delivery fee.', pt3_c: 'Buyer absent or refuses on a prepaid order: your trips are still paid.', pt3_d: 'No deposit for prepaid orders.', pt3_e: 'At most 3 active jobs, so you stay in control.',
+    rd4: '<b>Track your earnings</b>See this week, this month and pending earnings with /gains, and withdraw your available deposit with /retrait.',
+    rd5: '<b>No deposit for prepaid jobs</b>The deposit is only for cash on delivery. On prepaid orders you ride without locking anything.',
+    q7: 'Can I cancel an order, and will I be refunded?', a7: 'Yes, seller or buyer, as long as the rider hasn’t picked the parcel up. Before payment there is nothing to refund. After payment and before pickup, the buyer is refunded in full. A paid order can only be cancelled by the buyer from the phone that paid. Once the parcel is picked up, it must first go back to the seller.',
+    q8: 'What if the seller cancels when the rider is already on the way?', a8: 'The buyer is still refunded in full. The rider who had already accepted receives half of the delivery fee. The seller pays it: it is taken from their next payouts.',
+    q9: 'Can I use my own rider?', a9: 'Yes. When creating the order, enter your rider’s rider number (BSR-XXXX, shown on their card). Only that person gets the job, wherever they are. If they don’t pick the parcel up within 45 minutes, the job opens to all riders. They must be registered and approved on BayamSafe.',
+    q10: 'Can I track the delivery and get my code on Telegram?', a10: 'Yes. On the payment page, tap “Suivre ma commande sur Telegram” (follow my order on Telegram): you get the steps and your release code in Telegram. During the last leg, the page shows the rider’s position, distance and estimated time. If you lose your code, support can resend it to your Telegram after checking.',
+    q11: 'What if the buyer is absent or unreachable at delivery?', a11: 'The rider taps “Client absent”: the buyer is notified and has 15 minutes. After that, the rider brings the parcel back to the seller and the buyer is refunded, minus the trips already made. For cash on delivery, 2 refusals or absences in 90 days require that number to pay upfront.',
+    q12: 'What if no rider is found?', a12: 'The seller and buyer are reminded at 6 h and 24 h. After 48 h without a rider, the buyer is automatically refunded in full (or the order is cancelled if it was meant to be paid in cash). A rider who accepts but doesn’t show up within 45 minutes is replaced.',
+    q13: 'What if I pay twice, or the wrong amount?', a13: 'A double, late or wrong-amount payment is automatically sent back to the number that paid. You don’t need to ask.',
     q1: 'Where is the money during delivery?', a1: 'It is collected by our Mobile Money payment provider and recorded in the order’s escrow account. Nobody can touch it until the buyer gives their code or a dispute is settled.',
-    q2: 'What if the buyer refuses the parcel?', a2: 'The order goes into dispute and the money stays locked. Our team hears both sides. If the parcel was correct, you are paid; otherwise the buyer is refunded, and the rider keeps the fee for the trips actually made.',
+    q2: 'What if the buyer refuses the parcel?', a2: 'The rider reports it and brings the parcel back to the seller. When the seller confirms they have it, the buyer is refunded automatically, minus the trips the riders actually made. If there is a disagreement about the parcel’s condition, a dispute is opened, the money stays locked and our team decides after hearing both sides.',
     q3: 'When do I get my money?', a3: 'The payout to your MTN MoMo or Orange Money is sent automatically as soon as the rider enters the buyer’s correct code.',
     q4: 'Can the seller see the buyer’s code?', a4: 'No. The code is only shown on the phone that made the payment. Neither the seller nor the rider can see it.',
     q5: 'My buyer doesn’t use Telegram. Is that a problem?', a5: 'No. Only sellers and riders use Telegram. Your buyer gets a simple link (by WhatsApp, SMS, Messenger) that opens in any browser.',

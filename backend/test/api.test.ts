@@ -7,7 +7,7 @@ import { createServer } from '../src/api/server.js';
 import { CampayGateway } from '../src/payments/campay.js';
 import { signHs256 } from '../src/payments/jwt.js';
 import { createAdminSession, hashPassword, verifyAdminSession, verifyPassword } from '../src/api/admin-auth.js';
-import { intraInput, makeApp, makeMerchant, makeRider, TestApp } from './helpers.js';
+import { intraInput, makeApp, makeMerchant, makeRider, releaseCode, TestApp } from './helpers.js';
 
 const ADMIN = 'admin-key-admin-key-admin-key';
 
@@ -88,7 +88,7 @@ describe('HTTP API', () => {
 
     await app.orders.claim(rider.telegramId, order.id);
     await app.orders.confirmPickup(rider.telegramId, order.id);
-    const dispute = await call('POST', `/api/checkout/${order.id}/dispute`, { headers: auth, json: { reason: 'Colis abîmé' } });
+    const dispute = await call('POST', `/api/checkout/${order.id}/dispute`, { headers: { ...auth, 'x-buyer-session': session }, json: { reason: 'Colis abîmé' } });
     assert.equal(dispute.body.status, 'DISPUTED');
   });
 
@@ -124,8 +124,8 @@ describe('HTTP API', () => {
   });
 
   it('admin endpoints require the bearer key and never leak secrets', async () => {
-    assert.equal((await call('GET', '/api/admin/orders')).status, 403);
-    assert.equal((await call('GET', '/api/admin/orders', { headers: { authorization: 'Bearer wrong' } })).status, 403);
+    assert.equal((await call('GET', '/api/admin/orders')).status, 401);
+    assert.equal((await call('GET', '/api/admin/orders', { headers: { authorization: 'Bearer wrong' } })).status, 401);
     const list = await call('GET', '/api/admin/orders', { headers: { authorization: `Bearer ${ADMIN}` } });
     assert.equal(list.status, 200);
     assert.ok(list.body.length > 0);
@@ -175,6 +175,129 @@ describe('HTTP API', () => {
     assert.ok(Array.isArray(map.body.riders) && Array.isArray(map.body.orders));
   });
 
+  describe('v2 buyer and admin endpoints', () => {
+    const auth = { authorization: `Bearer ${ADMIN}` };
+
+    const disputedOrder = async () => {
+      const merchant = await makeMerchant(app);
+      const rider = await makeRider(app);
+      const { order, buyerToken } = await app.orders.createOrder(merchant, intraInput());
+      const pay = await app.orders.initiatePayment(order.id, buyerToken, '677001122');
+      const ref = (await app.store.getOrder(order.id))!.payment.reference!;
+      app.sim.approve(ref);
+      await app.handlePaymentReference(ref);
+      await app.orders.claim(rider.telegramId, order.id);
+      await app.orders.confirmPickup(rider.telegramId, order.id);
+      await app.orders.openDispute(order.id, 'BUYER', 'wrong size');
+      return { merchant, rider, order, buyerToken, session: pay.sessionToken };
+    };
+
+    it('new admin endpoints require admin auth', async () => {
+      const checks: [string, string][] = [
+        ['POST', '/api/admin/orders/x/resume'], ['POST', '/api/admin/orders/x/reassign'], ['POST', '/api/admin/orders/x/send-code'],
+        ['POST', '/api/admin/users/x/suspend'], ['POST', '/api/admin/users/x/unsuspend'], ['GET', '/api/admin/payout-phones'],
+        ['POST', '/api/admin/users/x/payout-phone'], ['GET', '/api/admin/media/x'], ['GET', '/api/admin/audit']
+      ];
+      for (const [m, p] of checks) assert.equal((await call(m, p, m === 'GET' ? {} : { json: {} })).status, 401, `${m} ${p}`);
+    });
+
+    it('buyer confirm endpoints need the buyer token', async () => {
+      const merchant = await makeMerchant(app);
+      const { order } = await app.orders.createOrder(merchant, intraInput());
+      assert.equal((await call('POST', `/api/checkout/${order.id}/confirm-received`)).status, 404);
+      assert.equal((await call('POST', `/api/checkout/${order.id}/confirm-arrival`)).status, 404);
+    });
+
+    it('evidence upload validates mime and size, and the admin can view it', async () => {
+      const { order, buyerToken, session } = await disputedOrder();
+      const jpeg = (size: number) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(Math.max(0, size - 4), 1)]);
+      const post = (type: string, size: number, token = buyerToken) =>
+        fetch(`${base}/api/checkout/${order.id}/evidence`, { method: 'POST', headers: { 'content-type': type, 'x-buyer-token': token, 'x-buyer-session': session }, body: jpeg(size) });
+      assert.equal((await post('image/jpeg', 1000, 'nope')).status, 404);
+      assert.equal((await post('text/plain', 1000)).status, 400);
+      assert.equal((await post('image/jpeg', 100)).status, 400);
+      assert.equal((await post('image/jpeg', 3_500_000)).status, 413);
+      const ok = await post('image/jpeg', 2000);
+      assert.equal(ok.status, 200);
+      assert.deepEqual(await ok.json(), { ok: true });
+      const evidence = (await app.store.getOrder(order.id))!.dispute!.evidence!;
+      assert.equal(evidence.length, 1);
+      const media = await fetch(`${base}/api/admin/media/${evidence[0]}`, { headers: auth });
+      assert.equal(media.status, 200);
+      assert.equal(media.headers.get('content-type'), 'image/jpeg');
+      assert.equal((await fetch(`${base}/api/admin/media/${evidence[0]}`)).status, 401);
+    });
+
+    it('resolve (including SPLIT validation) writes an audit row, and the order view hides secrets', async () => {
+      const { order } = await disputedOrder();
+      const bad = await call('POST', `/api/admin/orders/${order.id}/resolve`, { headers: auth, json: { resolution: 'SPLIT' } });
+      assert.equal(bad.status, 400);
+      const r = await call('POST', `/api/admin/orders/${order.id}/resolve`, { headers: auth, json: { resolution: 'REFUND_BUYER', note: 'ok' } });
+      assert.equal(r.status, 200);
+      assert.equal('releaseCodeEnc' in r.body, false);
+      assert.equal('buyerSessionHash' in r.body, false);
+      const log = await call('GET', '/api/admin/audit?limit=10', { headers: auth });
+      assert.equal(log.status, 200);
+      const row = log.body.find((a: any) => a.target === order.id && a.action.startsWith('dispute.resolve'));
+      assert.ok(row);
+      assert.equal(row.actor, 'admin');
+    });
+
+    it('send-code never returns the code and is audited', async () => {
+      const merchant = await makeMerchant(app);
+      const { order } = await app.orders.createOrder(merchant, intraInput());
+      const o = (await app.store.getOrder(order.id))!;
+      await app.store.updateOrder({ ...o, buyerTelegramId: 4242 });
+      const code = releaseCode(app, o);
+      const r = await call('POST', `/api/admin/orders/${order.id}/send-code`, { headers: auth });
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body, { ok: true });
+      assert.equal(JSON.stringify(r.body).includes(code), false);
+      const log = await call('GET', '/api/admin/audit', { headers: auth });
+      assert.ok(log.body.some((a: any) => a.action === 'order.send_code' && a.target === order.id));
+    });
+
+    it('suspending a seller blocks new orders and is audited; unsuspend restores', async () => {
+      const merchant = await makeMerchant(app);
+      const s = await call('POST', `/api/admin/users/${merchant.id}/suspend`, { headers: auth, json: { note: 'fraud check' } });
+      assert.equal(s.status, 200);
+      assert.ok(s.body.suspendedAt);
+      await assert.rejects(app.orders.createOrder((await app.store.getUser(merchant.id))!, intraInput()), /suspendu/);
+      const u = await call('POST', `/api/admin/users/${merchant.id}/unsuspend`, { headers: auth });
+      assert.equal(u.body.suspendedAt, undefined);
+      await app.orders.createOrder((await app.store.getUser(merchant.id))!, intraInput());
+      const log = await call('GET', '/api/admin/audit', { headers: auth });
+      assert.ok(log.body.some((a: any) => a.action === 'user.suspend' && a.target === merchant.id && a.note === 'fraud check'));
+    });
+
+    it('payout phone change needs admin approval', async () => {
+      const merchant = await makeMerchant(app);
+      await assert.rejects(app.users.requestPayoutPhone(merchant.telegramId, merchant.phone), /déjà/);
+      await assert.rejects(app.users.requestPayoutPhone(merchant.telegramId, '12345'));
+      await app.users.requestPayoutPhone(merchant.telegramId, '677 55 44 33');
+      const pending = await call('GET', '/api/admin/payout-phones', { headers: auth });
+      assert.ok(pending.body.some((u: any) => u.id === merchant.id && u.pendingPayoutPhone));
+      const d = await call('POST', `/api/admin/users/${merchant.id}/payout-phone`, { headers: auth, json: { approve: true } });
+      assert.equal(d.status, 200);
+      assert.ok(d.body.payoutPhone);
+      assert.equal(d.body.pendingPayoutPhone, undefined);
+      assert.equal((await call('POST', `/api/admin/users/${merchant.id}/payout-phone`, { headers: auth, json: {} })).status, 400);
+    });
+
+    it('rider float withdrawal debits the balance, and reverts if the payout fails', async () => {
+      const rider = await makeRider(app, { floatBalance: 10_000, floatReserved: 2_000 });
+      await assert.rejects(app.riders.withdrawFloat(rider.telegramId, 9_000), /solde/);
+      await assert.rejects(app.riders.withdrawFloat(rider.telegramId, 100));
+      const { rider: after, topup } = await app.riders.withdrawFloat(rider.telegramId, 5_000);
+      assert.equal(after.floatBalance, 5_000);
+      assert.equal(topup.kind, 'WITHDRAWAL');
+      app.sim.failingPayoutPhones.add(rider.phone);
+      await assert.rejects(app.riders.withdrawFloat(rider.telegramId, 1_000), /échoué/);
+      assert.equal((await app.store.getRider(rider.id))!.floatBalance, 5_000);
+      app.sim.failingPayoutPhones.delete(rider.phone);
+    });
+  });
+
   it('serves the landing page at / and the dashboard at /admin', async () => {
     const home = await fetch(base + '/');
     assert.match(await home.text(), /Vendez en ligne/);
@@ -210,7 +333,7 @@ describe('admin password login', () => {
       const overview = await fetch(base + '/api/admin/overview', { headers: { authorization: `Bearer ${token}` } });
       assert.equal(overview.status, 200);
       const tampered = token.slice(0, -2) + (token.endsWith('aa') ? 'bb' : 'aa');
-      assert.equal((await fetch(base + '/api/admin/overview', { headers: { authorization: `Bearer ${tampered}` } })).status, 403);
+      assert.equal((await fetch(base + '/api/admin/overview', { headers: { authorization: `Bearer ${tampered}` } })).status, 401);
     } finally {
       server.close();
     }

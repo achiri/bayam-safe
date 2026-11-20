@@ -9,8 +9,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script>if (window.L) L.Icon.Default.imagePath = "/vendor/leaflet/images/";</script>
 <style>
 /* Layout: control-room UI. Sidebar + work area; everything scans in one glance, actions sit next to what they act on. */
 :root {
@@ -162,6 +163,9 @@ td.r, th.r { text-align: right; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
 .toast { position: fixed; bottom: max(20px, env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-weight: 600; z-index: 60; }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--ink); }
+.warn { border-color: #6B3624; }
+.ev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+.split-line { font-family: var(--mono); font-size: 13px; color: var(--gold); }
 .health { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 @media (prefers-reduced-motion: no-preference) { .bars .bar { transition: height .5s ease; } }
 </style>
@@ -212,6 +216,8 @@ td.r, th.r { text-align: right; }
       <a href="#riders" data-view="riders">Livreurs</a>
       <a href="#sellers" data-view="sellers">Vendeurs</a>
       <a href="#money" data-view="money">Argent</a>
+      <a href="#phones" data-view="phones">Numéros de paiement <span class="badge" id="navPhones" hidden></span></a>
+      <a href="#audit" data-view="audit">Journal</a>
     </nav>
     <div class="side-foot">
       <span id="envLine"></span>
@@ -262,8 +268,11 @@ td.r, th.r { text-align: right; }
       headers: Object.assign({ Authorization: 'Bearer ' + key }, opts.body ? { 'Content-Type': 'application/json' } : {}),
       body: opts.body ? JSON.stringify(opts.body) : undefined
     });
-    if (res.status === 403) { logout('Clé refusée.'); throw new Error('forbidden'); }
     const data = await res.json().catch(() => ({}));
+    // Log out only on real auth failures (401, or the "Admin login required" 403); business-rule 403s just toast.
+    if (res.status === 401 || (res.status === 403 && (data.message === 'Admin login required' || ['UNAUTHORIZED', 'AUTH_REQUIRED', 'ADMIN_AUTH_REQUIRED'].includes(data.error)))) {
+      logout('Clé refusée.'); throw new Error('forbidden');
+    }
     if (!res.ok) throw new Error(data.message || `Erreur ${res.status}`);
     return data;
   }
@@ -277,6 +286,23 @@ td.r, th.r { text-align: right; }
     blobCache.set(fileId, p);
     return p;
   }
+  /** Buyer evidence lives in /media/:id (admin-auth), fetched as a blob like the KYC files. */
+  const mediaCache = new Map();
+  function mediaUrl(id) {
+    if (!mediaCache.has(id)) {
+      mediaCache.set(id, fetch('/api/admin/media/' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + key } })
+        .then((r) => (r.ok ? r.blob() : null)).then((b) => (b ? URL.createObjectURL(b) : null)).catch(() => null));
+    }
+    return mediaCache.get(id);
+  }
+  function evidenceThumb(id, i) {
+    const im = h('img', { alt: `Photo du client ${i + 1}`, loading: 'lazy' });
+    const b = h('button', { class: 'thumb', type: 'button', title: 'Ouvrir en grand', 'aria-label': `Ouvrir la photo du client ${i + 1}`, onclick: async () => { const u = await mediaUrl(id); if (u) window.open(u, '_blank', 'noopener'); } }, im);
+    mediaUrl(id).then((u) => { if (u) im.src = u; else b.replaceWith(h('div', { class: 'empty', style: 'padding:8px;font-size:11px', text: 'Image indisponible' })); });
+    return b;
+  }
+  /** Confirm dialog for every money-moving or irreversible action. */
+  const sure = (msg) => window.confirm(msg);
   function img(fileId, alt, cls) {
     const el = h('img', { alt, class: cls, loading: 'lazy' });
     fileUrl(fileId).then((u) => { if (u) el.src = u; else el.replaceWith(h('div', { class: 'empty', style: 'padding:12px;font-size:12px', text: fileId ? 'Image indisponible' : 'Manquante' })); });
@@ -329,7 +355,7 @@ td.r, th.r { text-align: right; }
     } catch (err) { if (err.message !== 'forbidden') $('#loginErr').textContent = err.message; }
   };
 
-  const views = { overview, verify, orders, live, riders, sellers, money };
+  const views = { overview, verify, orders, live, riders, sellers, money, phones, audit };
   let refreshTimer = null;
   function route() {
     const v = (location.hash || '#overview').slice(1);
@@ -352,6 +378,10 @@ td.r, th.r { text-align: right; }
       const v = o.queues.kycPending + o.queues.ridersPending;
       $('#navVerify').hidden = !v; $('#navVerify').textContent = v;
       $('#navDisputes').hidden = !o.queues.disputes; $('#navDisputes').textContent = o.queues.disputes;
+    } catch {}
+    try {
+      const ph = await api('/payout-phones');
+      $('#navPhones').hidden = !ph.length; $('#navPhones').textContent = ph.length;
     } catch {}
   }
   const page = (title, sub, ...actions) =>
@@ -532,21 +562,68 @@ td.r, th.r { text-align: right; }
     const close = () => { bg.remove(); dr.remove(); document.removeEventListener('keydown', esc); };
     const esc = (e) => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', esc);
-    const act = async (path, body, ok) => {
+    const act = async (path, body, ok, confirmMsg) => {
+      if (confirmMsg && !sure(confirmMsg)) return;
       try { await api(path, { method: 'POST', body }); toast(ok); close(); openOrder(id); route(); refreshBadges(); }
       catch (e) { toast(e.message); }
     };
     const resolveNote = h('input', { class: 'input', placeholder: 'Note de décision (facultatif)', 'aria-label': 'Note de décision' });
     const actions = [];
+    const d = o.dispute;
+    const KIND = { BUYER_ABSENT: 'Client absent', BUYER_REFUSED: 'Client a refusé', SELLER_RETURN: 'Retour demandé par le vendeur', CODE_LOCK: 'Code bloqué', OTHER: 'Autre' };
+    const phoDoc = (label, f) => h('div', { class: 'fact' }, h('div', { class: 'k', text: label }), h('div', { class: 'v', text: f ? 'Présente' : 'Absente' }), f ? h('div', { style: 'margin-top:6px;max-width:96px' }, h('div', { class: 'thumb' }, img(f, label))) : null);
+    const hasAlert = d || o.absence || o.agencyFeeClaim || o.pickupPhotoFileId || o.deliveryPhotoFileId || o.recipientName || o.recipientPhone;
+    if (hasAlert) {
+      actions.push(h('div', { class: 'card' + (o.status === 'DISPUTED' ? ' warn' : '') },
+        h('h3', { text: d ? 'Litige et preuves' : 'Alertes et preuves', style: 'font-size:16px;margin-bottom:10px' }),
+        h('div', { class: 'facts' },
+          d ? h('div', { class: 'fact' }, h('div', { class: 'k', text: 'Type' }), h('div', { class: 'v', text: KIND[d.kind] || d.kind || 'Non précisé' })) : null,
+          d ? h('div', { class: 'fact' }, h('div', { class: 'k', text: 'Retour du colis' }), h('div', { class: 'v', text: d.returnRequired ? (d.returnReceivedAt ? `Reçu le ${when(d.returnReceivedAt)}` : 'Exigé, pas encore reçu') : 'Non exigé' })) : null,
+          o.absence ? h('div', { class: 'fact' }, h('div', { class: 'k', text: 'Absence' }), h('div', { class: 'v', text: `${o.absence.side === 'BUYER' ? 'Client' : 'Vendeur'} · ${when(o.absence.at)}` })) : null,
+          o.agencyFeeClaim ? h('div', { class: 'fact' }, h('div', { class: 'k', text: 'Frais d’agence déclarés' }), h('div', { class: 'v', text: `${fcfa(o.agencyFeeClaim.amount)} · ${{ PENDING: 'à décider', APPROVED: 'approuvés', REJECTED: 'refusés' }[o.agencyFeeClaim.status] || o.agencyFeeClaim.status}` })) : null,
+          (o.recipientName || o.recipientPhone) ? h('div', { class: 'fact' }, h('div', { class: 'k', text: 'Destinataire' }), h('div', { class: 'v', text: [o.recipientName, o.recipientPhone].filter(Boolean).join(' · ') })) : null,
+          phoDoc('Photo de ramassage', o.pickupPhotoFileId), phoDoc('Photo de remise', o.deliveryPhotoFileId)
+        ),
+        d ? h('p', { class: 'sub', style: 'margin:10px 0 0' }, `${d.openedBy || ''} · ${when(d.openedAt)} : `, d.reason || '') : null,
+        d ? h('div', { style: 'margin-top:10px' }, h('div', { class: 'sub', text: `Photos du client (${(d.evidence || []).length}/5)` }), (d.evidence || []).length ? h('div', { class: 'ev-grid', style: 'margin-top:6px' }, d.evidence.map((m, i) => evidenceThumb(m, i))) : h('div', { class: 'sub', text: 'Aucune photo.' })) : null
+      ));
+    }
     if (o.status === 'DISPUTED') {
+      const maxBuyer = o.total;
+      const buyerAmt = h('input', { class: 'input mono', type: 'number', min: '0', max: String(maxBuyer), step: '1', value: '0', 'aria-label': 'Montant remboursé au client (FCFA)', style: 'max-width:200px' });
+      const splitLine = h('div', { class: 'split-line', role: 'status', 'aria-live': 'polite' });
+      const upd = () => { const v = Math.round(Number(buyerAmt.value) || 0); splitLine.textContent = `Client : ${fcfa(v)} · Reste pour livreurs, commission et vendeur : ${fcfa(Math.max(0, maxBuyer - v))}`; };
+      buyerAmt.oninput = upd; upd();
       actions.push(h('div', { class: 'card', style: 'border-color:#6B3624' },
-        h('h3', { text: 'Litige', style: 'font-size:16px' }),
-        h('p', { class: 'sub', style: 'margin:6px 0 12px' }, `${o.dispute?.openedBy || ''} · ${when(o.dispute?.openedAt)} : `, o.dispute?.reason || ''),
+        h('h3', { text: 'Décision', style: 'font-size:16px' }),
+        h('p', { class: 'sub', style: 'margin:6px 0 12px', text: 'La note est enregistrée dans le journal.' }),
         resolveNote,
         h('div', { class: 'toolbar', style: 'margin:10px 0 0' },
-          h('button', { class: 'btn primary', type: 'button', onclick: () => act(`/orders/${id}/resolve`, { resolution: 'RELEASE_TO_MERCHANT', note: resolveNote.value }, 'Fonds libérés au vendeur.'), text: 'Payer le vendeur' }),
-          h('button', { class: 'btn danger', type: 'button', onclick: () => act(`/orders/${id}/resolve`, { resolution: 'REFUND_BUYER', note: resolveNote.value }, 'Remboursement lancé.'), text: 'Rembourser le client' })
+          h('button', { class: 'btn', type: 'button', onclick: () => { if (!resolveNote.value.trim()) { resolveNote.focus(); return toast('Une note est requise pour reprendre la commande.'); } act(`/orders/${id}/resume`, { note: resolveNote.value.trim() }, 'Commande reprise.', 'Reprendre cette commande là où elle s’était arrêtée ? Le litige sera clos.'); }, text: 'Reprendre la commande' }),
+          h('button', { class: 'btn primary', type: 'button', onclick: () => act(`/orders/${id}/resolve`, { resolution: 'RELEASE_TO_MERCHANT', note: resolveNote.value }, 'Fonds libérés au vendeur.', `Payer le vendeur ? Les fonds sont libérés (${fcfa(o.total)} en séquestre). Irréversible.`), text: 'Payer le vendeur' }),
+          h('button', { class: 'btn danger', type: 'button', onclick: () => act(`/orders/${id}/resolve`, { resolution: 'REFUND_BUYER', note: resolveNote.value }, 'Remboursement lancé.', `Rembourser le client ? Un remboursement est envoyé au numéro du payeur. Irréversible.`), text: 'Rembourser le client' })
+        ),
+        h('div', { style: 'margin-top:16px;display:grid;gap:8px' },
+          h('label', { class: 'sub', for: 'splitAmt', text: 'Partager : montant rendu au client (FCFA)' }),
+          (buyerAmt.id = 'splitAmt', buyerAmt),
+          splitLine,
+          h('button', { class: 'btn danger', type: 'button', style: 'justify-self:start', onclick: () => {
+            const v = Number(buyerAmt.value);
+            if (!Number.isInteger(v) || v < 0 || v > maxBuyer) { buyerAmt.focus(); return toast(`Entrez un entier entre 0 et ${maxBuyer}.`); }
+            act(`/orders/${id}/resolve`, { resolution: 'SPLIT', note: resolveNote.value, buyerAmount: v }, 'Partage enregistré.', `Partager le litige ? ${fcfa(v)} seront remboursés au client, le reste ira aux livreurs et au vendeur. Irréversible.`);
+          }, text: 'Partager' })
         )
+      ));
+    }
+    const FINAL = ['DELIVERED', 'SETTLED', 'REFUNDED', 'CANCELLED', 'EXPIRED', 'PENDING_PAYMENT'];
+    if (!FINAL.includes(o.status)) {
+      const riderCode = h('input', { class: 'input mono', placeholder: 'Code livreur (ex. R-1234)', 'aria-label': 'Code du nouveau livreur', style: 'max-width:240px' });
+      actions.push(h('div', { class: 'card' },
+        h('h3', { text: 'Livreur et code', style: 'font-size:16px;margin-bottom:10px' }),
+        h('div', { class: 'toolbar', style: 'margin:0 0 10px' }, riderCode,
+          h('button', { class: 'btn small', type: 'button', onclick: () => { const c = riderCode.value.trim(); if (!c) { riderCode.focus(); return toast('Saisissez le code du livreur.'); } act(`/orders/${id}/reassign`, { riderCode: c }, 'Livreur réaffecté.', `Réaffecter cette commande au livreur ${c} ? Le livreur actuel sera retiré.`); }, text: 'Réaffecter' }),
+          h('button', { class: 'btn small', type: 'button', onclick: () => act(`/orders/${id}/reassign`, { riderCode: null }, 'Commande remise au pool.', 'Retirer le livreur et remettre la commande au pool ?'), text: 'Remettre au pool' })),
+        h('button', { class: 'btn small', type: 'button', onclick: () => act(`/orders/${id}/send-code`, {}, 'Code renvoyé sur le Telegram du client.', 'Renvoyer le code de libération au Telegram du client ?'), text: 'Renvoyer le code' })
       ));
     }
     const quick = [];
@@ -629,14 +706,14 @@ td.r, th.r { text-align: right; }
       page('Livreurs', `${list.filter((r) => r.status === 'APPROVED').length} approuvés · ${list.filter((r) => r.onDuty).length} en service`),
       h('div', { class: 'toolbar' }, reasonInput),
       list.length ? h('div', { class: 'table-box' }, h('table', {},
-        h('thead', {}, h('tr', {}, ['Livreur', 'N°', 'Ville', 'Statut', 'Service', 'Caution (bloquée)', 'Livraisons', 'Vu', ''].map((t, i) => h('th', { class: i === 5 || i === 6 ? 'r' : '', text: t })))),
+        h('thead', {}, h('tr', {}, ['Livreur', 'N°', 'Ville', 'Statut', 'Service', 'Caution (bloquée)', 'Livraisons', 'Absences', 'Vu', ''].map((t, i) => h('th', { class: i === 5 || i === 6 || i === 7 ? 'r' : '', text: t })))),
         h('tbody', {}, list.map((r) => h('tr', { style: 'cursor:default' },
           h('td', {}, h('b', { text: r.fullName }), h('div', { class: 'sub mono', text: `${r.phone} · ${r.plateNumber}` })),
           h('td', { class: 'mono', text: r.riderCode }), h('td', { text: r.city || '—' }), h('td', {}, pill(r.status, PEOPLE)),
           h('td', { text: r.onDuty ? '🟢' : '—' }), h('td', { class: 'r num', text: `${fcfa(r.floatBalance)} (${(r.floatReserved || 0).toLocaleString('fr-FR')})` }),
-          h('td', { class: 'r num', text: r.completedDeliveries }), h('td', { class: 'sub', text: ago(r.locationUpdatedAt) }),
+          h('td', { class: 'r num', text: r.completedDeliveries }), h('td', { class: 'r num', style: (r.noShows || 0) >= 3 ? 'color:var(--laterite)' : '', text: r.noShows || 0 }), h('td', { class: 'sub', text: ago(r.locationUpdatedAt) }),
           h('td', {}, r.status === 'APPROVED'
-            ? h('button', { class: 'btn danger small', type: 'button', onclick: () => act(r, 'SUSPENDED'), text: 'Suspendre' })
+            ? h('button', { class: 'btn danger small', type: 'button', onclick: () => { if (sure(`Suspendre le livreur ${r.fullName} ?`)) act(r, 'SUSPENDED'); }, text: 'Suspendre' })
             : r.status === 'PENDING' ? h('a', { class: 'btn small', href: '#verify', text: 'Vérifier' })
             : h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'APPROVED'), text: 'Réactiver' }))
         )))
@@ -653,10 +730,11 @@ td.r, th.r { text-align: right; }
       const s = q.value.toLowerCase();
       const rows = list.filter((u) => !s || [u.shopName, u.fullName, u.phone, u.city].some((x) => String(x || '').toLowerCase().includes(s)));
       box.replaceChildren(h('div', { class: 'table-box' }, h('table', {},
-        h('thead', {}, h('tr', {}, ['Boutique', 'Contact', 'Ville', 'Profil', 'Inscription en cours', 'Inscrit'].map((t) => h('th', { text: t })))),
+        h('thead', {}, h('tr', {}, ['Boutique', 'Contact', 'Ville', 'Profil', 'Dû à la plateforme', 'Inscription en cours', 'Inscrit'].map((t, i) => h('th', { class: i === 4 ? 'r' : '', text: t })))),
         h('tbody', {}, rows.map((u) => h('tr', { onclick: () => openSeller(u.id) },
-          h('td', {}, h('b', { text: u.shopName }), u.kycStatus === 'VERIFIED' ? ' 🏅' : ''), h('td', {}, u.fullName, h('div', { class: 'sub mono', text: u.phone })),
+          h('td', {}, h('b', { text: u.shopName }), u.kycStatus === 'VERIFIED' ? ' 🏅' : '', u.suspendedAt ? [' ', h('span', { class: 'pill bad', text: 'Suspendu' })] : null), h('td', {}, u.fullName, h('div', { class: 'sub mono', text: u.phone })),
           h('td', { text: u.city || '—' }), h('td', {}, pill(u.kycStatus, PEOPLE)),
+          h('td', { class: 'r num', style: u.owedToPlatform ? 'color:var(--laterite)' : '', text: u.owedToPlatform ? fcfa(u.owedToPlatform) : '—' }),
           h('td', { class: 'sub', text: u.signupInProgress ? `${u.signupInProgress.kind === 'rider' ? 'Livreur' : 'Vendeur'} · étape « ${u.signupInProgress.step} »` : '—' }),
           h('td', { class: 'sub', text: when(u.createdAt) })
         )))
@@ -669,10 +747,22 @@ td.r, th.r { text-align: right; }
   async function openSeller(id) {
     const { user: u, orders: list } = await api('/users/' + id);
     const close = () => { bg.remove(); dr.remove(); };
+    const suspNote = h('input', { class: 'input', placeholder: 'Motif de suspension (obligatoire)', 'aria-label': 'Motif de suspension', style: 'max-width:420px' });
+    const sellerAct = async (path, body, ok, msg) => {
+      if (!sure(msg)) return;
+      try { await api(path, { method: 'POST', body }); toast(ok); close(); openSeller(id); if (location.hash === '#sellers') sellers(); }
+      catch (e) { toast(e.message); }
+    };
+    const suspendBox = u.suspendedAt
+      ? h('div', { class: 'card warn' }, h('div', { class: 'toolbar', style: 'margin:0' }, h('span', { class: 'pill bad', text: 'Suspendu' }), h('span', { class: 'sub', text: `depuis ${when(u.suspendedAt)}${u.suspendNote ? ' · ' + u.suspendNote : ''}` })),
+          h('button', { class: 'btn small', type: 'button', style: 'margin-top:10px', onclick: () => sellerAct(`/users/${id}/unsuspend`, {}, 'Vendeur réactivé.', `Réactiver ${u.shopName} ?`), text: 'Réactiver' }))
+      : h('div', { class: 'card' }, h('h3', { text: 'Suspension', style: 'font-size:16px;margin-bottom:8px' }), suspNote,
+          h('button', { class: 'btn danger small', type: 'button', style: 'margin-top:10px', onclick: () => { const n = suspNote.value.trim(); if (!n) { suspNote.focus(); return toast('Indiquez le motif de suspension.'); } sellerAct(`/users/${id}/suspend`, { note: n }, 'Vendeur suspendu.', `Suspendre ${u.shopName} ? Il ne pourra plus créer de commandes.`); }, text: 'Suspendre' }));
     const bg = h('div', { class: 'drawer-bg', onclick: close });
     const dr = h('aside', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': u.shopName },
       h('div', { class: 'vhead' }, h('div', {}, h('h2', { text: u.shopName }), h('div', { class: 'sub', text: `${u.fullName} · ${u.phone}` })), h('button', { class: 'btn small', type: 'button', onclick: close, text: 'Fermer' })),
-      h('div', { class: 'toolbar', style: 'margin:0' }, pill(u.kycStatus, PEOPLE), u.kycNote ? h('span', { class: 'sub', text: 'Motif : ' + u.kycNote }) : null),
+      h('div', { class: 'toolbar', style: 'margin:0' }, pill(u.kycStatus, PEOPLE), u.suspendedAt ? h('span', { class: 'pill bad', text: 'Suspendu' }) : null, u.owedToPlatform ? h('span', { class: 'pill wait', text: `Dû à la plateforme : ${fcfa(u.owedToPlatform)}` }) : null, u.kycNote ? h('span', { class: 'sub', text: 'Motif : ' + u.kycNote }) : null),
+      suspendBox,
       h('div', { class: 'thumbs' }, [['Selfie', u.selfieFileId], ['Recto', u.cniFrontFileId], ['Verso', u.cniBackFileId], ['Boutique', u.shopPhotoFileId]].map(([l, f]) => h('div', { class: 'thumb' }, f ? img(f, l) : h('div', { class: 'empty', style: 'padding:8px;font-size:11px', text: '—' }), h('span', { text: l })))),
       h('div', { class: 'facts' }, [['Ville', u.city], ['N° CNI', u.cniNumber], ['Envoyé', when(u.kycSubmittedAt)], ['Décidé', when(u.kycReviewedAt)]].map(([k, v]) => h('div', { class: 'fact' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: v || '—' })))),
       u.shopLocation ? h('a', { class: 'btn small', href: `https://www.google.com/maps?q=${u.shopLocation.lat},${u.shopLocation.lng}`, target: '_blank', rel: 'noopener', text: 'Voir la boutique sur Google Maps' }) : null,
@@ -697,6 +787,45 @@ td.r, th.r { text-align: right; }
           h('td', { class: 'mono', text: o.trackingCode }), h('td', { class: 'mono', text: p.phone }), h('td', { class: 'r num', text: fcfa(p.amount) }), h('td', {}, pill(p.status, PAYOUT)), h('td', { class: 'sub', text: p.lastError || '—' })
         )))
       )) : h('div', { class: 'card empty', text: 'Tous les versements sont partis.' })
+    );
+  }
+
+  // ------------------------------------------------------------------ payout-number approvals
+  async function phones() {
+    const list = await api('/payout-phones');
+    const decide = async (u, approve) => {
+      const msg = approve
+        ? `Approuver le nouveau numéro de paiement de ${u.shopName || u.fullName} ? Numéro actuel : ${u.payoutPhone || u.phone || '—'} → nouveau numéro : ${u.pendingPayoutPhone}. Les prochains versements iront au nouveau numéro.`
+        : `Refuser le changement de numéro de ${u.shopName || u.fullName} ?`;
+      if (!sure(msg)) return;
+      try { await api(`/users/${u.id}/payout-phone`, { method: 'POST', body: { approve } }); toast(approve ? 'Numéro approuvé.' : 'Changement refusé.'); phones(); refreshBadges(); }
+      catch (e) { toast(e.message); }
+    };
+    $('#main').replaceChildren(
+      page('Numéros de paiement', 'Un changement de numéro redirige l’argent : vérifiez avant d’approuver.', h('button', { class: 'btn small', type: 'button', onclick: () => phones().catch((e) => toast(e.message)), text: 'Actualiser' })),
+      list.length ? h('div', { class: 'table-box' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Compte', 'Numéro actuel', 'Numéro demandé', ''].map((t) => h('th', { text: t })))),
+        h('tbody', {}, list.map((u) => h('tr', { style: 'cursor:default' },
+          h('td', {}, h('b', { text: u.shopName || u.fullName }), h('div', { class: 'sub', text: u.fullName || '' })),
+          h('td', { class: 'mono', text: u.payoutPhone || u.phone || '—' }), h('td', { class: 'mono', text: u.pendingPayoutPhone }),
+          h('td', {}, h('div', { class: 'toolbar', style: 'margin:0' },
+            h('button', { class: 'btn primary small', type: 'button', onclick: () => decide(u, true), text: 'Approuver' }),
+            h('button', { class: 'btn danger small', type: 'button', onclick: () => decide(u, false), text: 'Refuser' }))))))
+      )) : h('div', { class: 'card empty', text: 'Aucune demande en attente.' })
+    );
+  }
+
+  // ------------------------------------------------------------------ audit journal
+  async function audit() {
+    const list = await api('/audit?limit=200');
+    $('#main').replaceChildren(
+      page('Journal', 'Les 200 dernières actions de l’équipe, de la plus récente à la plus ancienne.', h('button', { class: 'btn small', type: 'button', onclick: () => audit().catch((e) => toast(e.message)), text: 'Actualiser' })),
+      list.length ? h('div', { class: 'table-box' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['Date', 'Acteur', 'Action', 'Cible', 'Note'].map((t) => h('th', { text: t })))),
+        h('tbody', {}, list.map((a) => h('tr', { style: 'cursor:default' },
+          h('td', { class: 'sub', text: when(a.at) }), h('td', { text: a.actor }), h('td', { class: 'mono', text: a.action }),
+          h('td', { class: 'mono', text: a.target || '—' }), h('td', { class: 'sub', text: a.note || '—' }))))
+      )) : h('div', { class: 'card empty', text: 'Le journal est vide.' })
     );
   }
 

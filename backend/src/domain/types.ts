@@ -55,6 +55,17 @@ export interface User {
   kycNote?: string;
   /** Sign-up in progress (merchant or rider), saved after every step so nothing is lost. */
   draft?: OnboardingDraft;
+  /** Set by an admin: the seller can't create new sales (existing orders run their course). */
+  suspendedAt?: string;
+  suspendNote?: string;
+  /** Mobile Money number for payouts, if different from the Telegram number (admin-approved). */
+  payoutPhone?: string;
+  /** Requested new payout number, waiting for admin approval. */
+  pendingPayoutPhone?: string;
+  /** FCFA the seller owes the platform (e.g. half delivery fee after a late cancel); taken from next payouts. */
+  owedToPlatform?: number;
+  /** Times a rider reported the seller absent at pickup. */
+  absentAtPickup?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,6 +105,8 @@ export interface Rider {
   /** Portion of the float locked against COD orders currently in progress. */
   floatReserved: number;
   completedDeliveries: number;
+  /** Accepted jobs never picked up (auto-released after 45 min). */
+  noShows?: number;
   location?: GeoPoint;
   locationUpdatedAt?: string;
   createdAt: string;
@@ -141,9 +154,19 @@ export interface Dispute {
   openedAt: string;
   /** Status before the dispute, used to judge whether delivery was attempted. */
   fromStatus: OrderStatus;
-  resolution?: 'REFUND_BUYER' | 'RELEASE_TO_MERCHANT';
+  resolution?: 'REFUND_BUYER' | 'RELEASE_TO_MERCHANT' | 'SPLIT' | 'RESUMED';
   resolutionNote?: string;
   resolvedAt?: string;
+  /**
+   * BUYER_ABSENT / BUYER_REFUSED / SELLER_RETURN resolve automatically (buyer refunded, riders keep
+   * the legs they ran) once the seller confirms the parcel is back. OTHER needs an admin decision.
+   */
+  kind?: 'BUYER_ABSENT' | 'BUYER_REFUSED' | 'SELLER_RETURN' | 'CODE_LOCK' | 'OTHER';
+  /** The parcel must come back to the seller before money moves. */
+  returnRequired?: boolean;
+  returnReceivedAt?: string;
+  /** Media ids of photos the buyer attached. */
+  evidence?: string[];
 }
 
 export interface Order {
@@ -161,6 +184,9 @@ export interface Order {
 
   buyerPhone: string;
   buyerName?: string;
+  /** Person receiving the parcel, when not the buyer (e.g. buyer abroad). */
+  recipientName?: string;
+  recipientPhone?: string;
 
   itemTitle: string;
   itemPrice: number;
@@ -201,6 +227,17 @@ export interface Order {
   riderNearNotifiedAt?: string;
   /** Last time seller/buyer/admins were told no rider is available (to avoid repeating it). */
   noRiderNoticeAt?: string;
+  /** Photos taken by the rider: parcel at pickup, handover at delivery. */
+  pickupPhotoFileId?: string;
+  deliveryPhotoFileId?: string;
+  /** A rider waited at the door / at the shop and nobody came. */
+  absence?: { side: 'BUYER' | 'SELLER'; riderId: string; at: string; location?: GeoPoint };
+  /** Reminder keys already sent (e.g. "stalled-6h"), so each is sent once. */
+  reminders?: string[];
+  /** COD buyer refused or wasn't there: counts towards the prepaid-only rule. */
+  buyerRefusalAt?: string;
+  /** Rider says the agency charged more than declared; the seller approves the difference. */
+  agencyFeeClaim?: { amount: number; status: 'PENDING' | 'APPROVED' | 'REJECTED'; at: string };
   /** COD: rider whose float is reserved against this order. */
   codRiderId?: string;
   codReserved: number;
@@ -222,6 +259,8 @@ export interface Order {
     initiatedAt?: string;
     confirmedAt?: string;
     lastCheckedAt?: string;
+    /** Every payment attempt, so late or duplicate payments can be refunded to the right number. */
+    attempts?: { reference: string; payerPhone: string; at: string }[];
   };
 
   payouts: Payout[];
@@ -240,7 +279,8 @@ export type LedgerAccount =
   | 'RIDER_PAYABLE'
   | 'BUYER_REFUND_PAYABLE'
   | 'PLATFORM_REVENUE'
-  | 'RIDER_FLOAT'; // rider collateral float
+  | 'RIDER_FLOAT' // rider collateral float
+  | 'MERCHANT_RECEIVABLE'; // what sellers owe the platform (negative = owed), recovered from payouts
 
 export interface LedgerLine {
   account: LedgerAccount;
@@ -257,10 +297,12 @@ export interface Journal {
   createdAt: string;
 }
 
-export type TopupStatus = 'PENDING' | 'CONFIRMED' | 'FAILED';
+export type TopupStatus = 'PENDING' | 'SENDING' | 'CONFIRMED' | 'FAILED' | 'NEEDS_REVIEW';
 
 export interface FloatTopup {
   id: string;
+  /** TOPUP: rider pays in. WITHDRAWAL: rider takes unlocked float back. */
+  kind?: 'TOPUP' | 'WITHDRAWAL';
   riderId: string;
   amount: number;
   phone: string;
@@ -276,4 +318,14 @@ export interface Media {
   mime: string;
   data: Buffer;
   createdAt: string;
+}
+
+/** Who did what in the admin dashboard, for accountability. */
+export interface AuditEntry {
+  id: string;
+  at: string;
+  actor: string;
+  action: string;
+  target?: string;
+  note?: string;
 }

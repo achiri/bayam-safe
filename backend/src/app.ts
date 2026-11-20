@@ -75,14 +75,30 @@ export function createApp(config: AppConfig, overrides: { store?: Store; gateway
   return { config, store, gateway, events, secrets, users, riders, orders, dispatch, files, handlePaymentReference };
 }
 
+const BOT_SESSION_RETENTION_MS = 7 * 86_400_000;
+
 /** Background jobs: expire unpaid orders, retry payouts. Returns a stop function. */
 export function startJobs(app: App): () => void {
-  const run = (name: string, fn: () => Promise<unknown>) => () =>
-    fn().catch((e) => console.error(`[job:${name}]`, e));
+  // Per-job in-flight guard: a slow run (big backlog, slow provider) is never overlapped by the next tick.
+  const inFlight = new Set<string>();
+  const run = (name: string, fn: () => Promise<unknown>) => () => {
+    if (inFlight.has(name)) {
+      console.warn(`[job:${name}] previous run still in progress, skipping this tick`);
+      return;
+    }
+    inFlight.add(name);
+    fn()
+      .catch((e) => console.error(`[job:${name}]`, e))
+      .finally(() => inFlight.delete(name));
+  };
   const timers = [
     setInterval(run('expire', () => app.orders.expireStale()), 5 * 60_000),
     setInterval(run('payouts', () => app.orders.processAllPendingPayouts()), 2 * 60_000),
-    setInterval(run('reoffer', () => app.orders.reofferStale()), 10 * 60_000)
+    setInterval(run('reoffer', () => app.orders.reofferStale()), 10 * 60_000),
+    setInterval(run('timeouts', () => app.orders.enforceTimeouts()), 5 * 60_000),
+    setInterval(run('sync-payments', () => app.orders.syncPendingPayments()), 2 * 60_000),
+    // Bot conversation state is only useful for a few days: drop abandoned sessions daily.
+    setInterval(run('purge-bot-sessions', () => app.store.purgeBotSessions(new Date(Date.now() - BOT_SESSION_RETENTION_MS).toISOString())), 24 * 3600_000)
   ];
   timers.forEach((t) => t.unref());
   return () => timers.forEach(clearInterval);

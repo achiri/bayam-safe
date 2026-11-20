@@ -11,6 +11,10 @@ export class SimulatedGateway implements PaymentGateway {
   private readonly txs = new Map<string, Transaction>();
   /** Phones whose withdrawals fail, to exercise payout retries in tests. */
   readonly failingPayoutPhones = new Set<string>();
+  /** Phones whose withdrawals throw (timeout/network: outcome unknown). */
+  readonly throwingPayoutPhones = new Set<string>();
+  /** Phones whose withdrawals stay PENDING until approve()/fail(). */
+  readonly pendingPayoutPhones = new Set<string>();
   readonly withdrawals: WithdrawRequest[] = [];
 
   async collect(req: CollectRequest): Promise<CollectResult> {
@@ -21,7 +25,20 @@ export class SimulatedGateway implements PaymentGateway {
   }
 
   async withdraw(req: WithdrawRequest): Promise<Transaction> {
-    if (this.failingPayoutPhones.has(req.phone)) throw new Error('Simulated payout failure');
+    if (this.throwingPayoutPhones.has(req.phone)) throw new Error('Simulated provider timeout');
+    if (this.failingPayoutPhones.has(req.phone)) {
+      // An explicit "FAILED" answer from the provider: money definitely not sent.
+      const reference = `SIMW-${randomUUID()}`;
+      const tx: Transaction = { reference, status: 'FAILED', amount: req.amount, externalReference: req.externalReference };
+      this.txs.set(reference, tx);
+      return tx;
+    }
+    if (this.pendingPayoutPhones.has(req.phone)) {
+      const reference = `SIMW-${randomUUID()}`;
+      const tx: Transaction = { reference, status: 'PENDING', amount: req.amount, externalReference: req.externalReference };
+      this.txs.set(reference, tx);
+      return tx;
+    }
     this.withdrawals.push(req);
     const reference = `SIMW-${randomUUID()}`;
     const tx: Transaction = { reference, status: 'SUCCESSFUL', amount: req.amount, externalReference: req.externalReference };

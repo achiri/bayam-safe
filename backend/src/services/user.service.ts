@@ -178,4 +178,57 @@ export class UserService {
   pendingKyc() {
     return this.store.listUsersByKyc('PENDING');
   }
+
+  async suspend(userId: string, note?: string): Promise<User> {
+    const u = await this.store.getUser(userId);
+    if (!u) throw notFound('User');
+    const now = new Date().toISOString();
+    u.suspendedAt = now;
+    u.suspendNote = note?.trim() ? clean(note, 300) : undefined;
+    u.updatedAt = now;
+    return this.store.updateUser(u);
+  }
+
+  async unsuspend(userId: string): Promise<User> {
+    const u = await this.store.getUser(userId);
+    if (!u) throw notFound('User');
+    u.suspendedAt = undefined;
+    u.suspendNote = undefined;
+    u.updatedAt = new Date().toISOString();
+    return this.store.updateUser(u);
+  }
+
+  /** A seller or rider asks to be paid on another number; an admin approves it first. */
+  async requestPayoutPhone(telegramId: number, phone: string): Promise<User> {
+    const u = await this.require(telegramId);
+    const normalized = normalizeCameroonPhone(phone);
+    if (normalized === (u.payoutPhone ?? u.phone)) throw invalid('Ce numéro est déjà votre numéro de paiement.');
+    u.pendingPayoutPhone = normalized;
+    u.updatedAt = new Date().toISOString();
+    const saved = await this.store.updateUser(u);
+    this.events.emit({ type: 'payout_phone.requested', user: saved });
+    return saved;
+  }
+
+  async decidePayoutPhone(userId: string, approve: boolean): Promise<User> {
+    const u = await this.store.getUser(userId);
+    if (!u) throw notFound('User');
+    if (!u.pendingPayoutPhone) throw invalid('Aucun changement de numéro en attente.');
+    const pending = u.pendingPayoutPhone;
+    if (approve) {
+      u.payoutPhone = pending;
+      const rider = await this.store.getRiderByTelegram(u.telegramId);
+      if (rider) await this.store.updateRider({ ...rider, phone: pending, updatedAt: new Date().toISOString() });
+    }
+    u.pendingPayoutPhone = undefined;
+    u.updatedAt = new Date().toISOString();
+    const saved = await this.store.updateUser(u);
+    this.events.emit({ type: 'payout_phone.decided', user: saved, approved: approve });
+    return saved;
+  }
+
+  async listPendingPayoutPhones(): Promise<User[]> {
+    const all = await this.store.listUsers(1000);
+    return all.filter((u) => !!u.pendingPayoutPhone);
+  }
 }

@@ -1,8 +1,8 @@
 import pg from 'pg';
 import { VersionConflictError } from '../domain/errors.js';
-import { FloatTopup, Journal, LedgerAccount, Media, Order, Rider, RiderStatus, User } from '../domain/types.js';
+import { AuditEntry, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
 import { SCHEMA_SQL } from './schema.js';
-import { assertBalanced, OrderQuery, Repo, Store } from './store.js';
+import { assertBalanced, OldestFirstCursor, OrderQuery, Repo, Store } from './store.js';
 
 /** Minimal SQL client so both node-postgres and PGlite (used in tests) fit. */
 export interface Sql {
@@ -106,6 +106,20 @@ class PgRepo implements Repo {
     return this.many<Order>(
       `SELECT data FROM orders ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
        ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+  }
+  listOrdersByStatusOldestFirst(statuses: OrderStatus[], limit: number, after?: OldestFirstCursor, opts: { withPaymentReference?: boolean } = {}) {
+    const params: unknown[] = [statuses];
+    const where = ['status = ANY($1::text[])'];
+    if (opts.withPaymentReference) where.push('payment_reference IS NOT NULL');
+    if (after) {
+      params.push(after.updatedAt, after.id);
+      where.push(`(updated_at, id) > ($${params.length - 1}::timestamptz, $${params.length}::text)`);
+    }
+    params.push(Math.min(limit, 1000));
+    return this.many<Order>(
+      `SELECT data FROM orders WHERE ${where.join(' AND ')} ORDER BY updated_at ASC, id ASC LIMIT $${params.length}`,
       params
     );
   }
@@ -256,6 +270,44 @@ class PgRepo implements Repo {
     );
     const r = rows[0];
     return r && { id: r.id, orderId: r.order_id, mime: r.mime, data: Buffer.from(r.data), createdAt: new Date(r.created_at).toISOString() };
+  }
+
+  async deleteMedia(id: string) {
+    await this.sql.query('DELETE FROM media WHERE id = $1', [id]);
+  }
+
+  async countBuyerRefusals(phone: string, sinceIso: string) {
+    const { rows } = await this.sql.query<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM orders WHERE data->>'buyerPhone' = $1 AND data ? 'buyerRefusalAt' AND data->>'buyerRefusalAt' >= $2`,
+      [phone, sinceIso]
+    );
+    return Number(rows[0].n);
+  }
+
+  async addAudit(e: AuditEntry) {
+    await this.sql.query('INSERT INTO admin_audit (id, at, data) VALUES ($1,$2,$3::jsonb)', [e.id, e.at, json(e)]);
+  }
+  listAudit(limit = 200) {
+    return this.many<AuditEntry>('SELECT data FROM admin_audit ORDER BY at DESC LIMIT $1', [Math.min(limit, 1000)]);
+  }
+
+  async getBotSession(key: string) {
+    const { rows } = await this.sql.query<{ data: unknown }>('SELECT data FROM bot_sessions WHERE key = $1', [key]);
+    return rows[0]?.data;
+  }
+  async setBotSession(key: string, value: unknown) {
+    await this.sql.query(
+      `INSERT INTO bot_sessions (key, data, updated_at) VALUES ($1,$2::jsonb,NOW())
+       ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [key, json(value)]
+    );
+  }
+  async deleteBotSession(key: string) {
+    await this.sql.query('DELETE FROM bot_sessions WHERE key = $1', [key]);
+  }
+  async purgeBotSessions(olderThanIso: string) {
+    const { rows } = await this.sql.query('DELETE FROM bot_sessions WHERE updated_at < $1 RETURNING key', [olderThanIso]);
+    return rows.length;
   }
 }
 

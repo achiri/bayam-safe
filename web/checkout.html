@@ -1,19 +1,16 @@
 <!DOCTYPE html>
+<!--
+  Styles are precompiled (BS-302). After changing any Tailwind class in this file, rebuild from the repo root:
+    npx tailwindcss@3 -c web/tailwind.config.cjs -i web/checkout.src.css -o web/checkout.css --minify
+  Leaflet is loaded lazily (loadLeaflet) only when a map is shown.
+-->
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="referrer" content="no-referrer">
   <title>BayamSafe Checkout</title>
-  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    #map { height: 180px; border-radius: 0.75rem; z-index: 0; }
-    .pulse { animation: pulse 1.5s infinite; }
-    @keyframes pulse { 50% { opacity: .45; } }
-  </style>
+  <link rel="stylesheet" href="/checkout.css">
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 flex justify-center p-3 sm:p-6">
 <main class="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col border border-slate-200">
@@ -23,11 +20,16 @@
       <h1 class="font-black text-lg">🛡️ BayamSafe</h1>
       <p class="text-xs text-emerald-100" data-i18n="tagline"></p>
     </div>
-    <button id="langBtn" class="bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold"></button>
+    <button id="langBtn" class="min-h-[44px] bg-white/20 hover:bg-white/30 text-xs px-3 py-1.5 rounded-full font-bold"></button>
   </header>
 
   <div class="p-5 space-y-4">
-    <div id="error" class="hidden bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-3"></div>
+    <div id="error" tabindex="-1" role="alert" class="hidden bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-3"></div>
+    <section id="absenceBanner" class="hidden bg-amber-100 border-2 border-amber-500 rounded-2xl p-4 space-y-2" aria-labelledby="absenceTitle">
+      <h2 id="absenceTitle" class="font-extrabold text-amber-900 text-sm" data-i18n="absenceTitle"></h2>
+      <div id="absenceTimer" class="font-mono text-2xl font-black text-amber-900" role="timer"></div>
+      <a id="absenceCall" class="hidden w-full min-h-[44px] flex items-center justify-center bg-amber-700 text-white font-extrabold text-sm rounded-xl px-3" href="#"></a>
+    </section>
     <div id="loading" class="text-center text-sm text-slate-500 py-10" data-i18n="loading"></div>
 
     <div id="content" class="hidden space-y-4">
@@ -51,6 +53,7 @@
         <div class="flex justify-between text-xs text-slate-600"><span data-i18n="delivery"></span><span class="font-bold" id="deliveryFee"></span></div>
         <div id="agencyRow" class="hidden flex justify-between text-xs text-slate-600"><span data-i18n="agencyFee"></span><span class="font-bold" id="agencyFee"></span></div>
         <div id="routeRow" class="hidden text-xs text-slate-600"></div>
+        <div id="recipientRow" class="hidden text-xs font-bold text-slate-700"></div>
         <div class="flex justify-between pt-2 border-t border-slate-200 font-extrabold">
           <span id="totalLabel"></span><span class="text-emerald-700" id="total"></span>
         </div>
@@ -79,12 +82,12 @@
           <span class="text-[11px] text-slate-400" id="trackAge"></span>
         </div>
         <div id="nearBanner" class="hidden bg-amber-400 text-slate-900 text-xs font-extrabold rounded-xl p-2" data-i18n="nearBanner"></div>
-        <div id="trackMap" style="height:200px;border-radius:12px;z-index:0"></div>
+        <div id="trackMap" style="height:200px;border-radius:12px;z-index:0" class="text-xs text-slate-400 flex items-center justify-center"></div>
         <div class="text-sm font-bold" id="trackInfo"></div>
       </section>
 
       <section id="followSection" class="hidden bg-sky-50 border border-sky-200 rounded-2xl p-3 text-xs space-y-2">
-        <button id="followBtn" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-2.5 rounded-xl" data-i18n="followBtn"></button>
+        <button id="followBtn" class="min-h-[44px] w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-2.5 rounded-xl" data-i18n="followBtn"></button>
         <p class="text-slate-600" data-i18n="followHint"></p>
       </section>
       <div id="followingNote" class="hidden text-xs text-sky-800 font-bold" data-i18n="following"></div>
@@ -103,7 +106,7 @@
       <section id="pendingSection" class="hidden bg-sky-50 border border-sky-200 rounded-2xl p-4 text-sm space-y-2">
         <div class="font-bold pulse" data-i18n="approveOnPhone"></div>
         <div class="text-xs text-slate-600" id="ussdHint"></div>
-        <button id="simulateBtn" class="hidden w-full bg-slate-800 text-white text-xs font-bold py-2 rounded-xl" data-i18n="simulate"></button>
+        <button id="simulateBtn" class="min-h-[44px] hidden w-full bg-slate-800 text-white text-xs font-bold py-2 rounded-xl" data-i18n="simulate"></button>
       </section>
 
       <section id="codInfo" class="hidden bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs" data-i18n="codInfo"></section>
@@ -111,17 +114,17 @@
       <!-- Delivery details -->
       <section id="deliverySection" class="hidden space-y-2 bg-emerald-50/40 p-4 rounded-2xl border border-emerald-200">
         <div class="text-xs font-bold text-emerald-900 uppercase" data-i18n="deliveryPoint"></div>
-        <button id="gpsBtn" class="w-full bg-white text-emerald-800 text-xs font-bold py-2.5 rounded-xl border border-emerald-300" data-i18n="useGps"></button>
-        <div id="map" class="w-full border border-slate-300"></div>
+        <button id="gpsBtn" class="min-h-[44px] w-full bg-white text-emerald-800 text-xs font-bold py-2.5 rounded-xl border border-emerald-300" data-i18n="useGps"></button>
+        <div id="map" class="w-full border border-slate-300 text-xs text-slate-500 flex items-center justify-center" role="application" aria-label="Carte"></div>
         <div id="gpsStatus" class="text-[11px] text-emerald-700"></div>
         <input id="addressInput" maxlength="200" class="w-full text-sm p-2.5 bg-white border border-slate-300 rounded-xl">
         <input id="landmarkInput" maxlength="200" class="w-full text-sm p-2.5 bg-white border border-slate-300 rounded-xl">
-        <button id="saveDeliveryBtn" class="w-full bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-xl" data-i18n="saveDelivery"></button>
+        <button id="saveDeliveryBtn" class="min-h-[44px] w-full bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-xl" data-i18n="saveDelivery"></button>
 
         <div class="pt-2 border-t border-emerald-200 space-y-2">
           <div class="text-xs font-bold text-amber-900"><span data-i18n="voiceTitle"></span> <span id="voiceTimer" class="font-mono">0s / 15s</span></div>
           <div class="flex gap-2 items-center">
-            <button id="recordBtn" class="flex-1 bg-amber-500 text-white text-xs font-bold py-2 rounded-xl" data-i18n="record"></button>
+            <button id="recordBtn" class="min-h-[44px] flex-1 bg-amber-500 text-white text-xs font-bold py-2 rounded-xl" data-i18n="record"></button>
             <audio id="voicePlayback" controls class="hidden h-9 w-40"></audio>
           </div>
           <div id="voiceStatus" class="text-[11px] text-slate-600"></div>
@@ -134,8 +137,27 @@
         <ol id="timeline" class="space-y-1 text-slate-600"></ol>
       </section>
 
-      <button id="disputeBtn" class="hidden w-full border border-red-300 text-red-700 text-xs font-bold py-2.5 rounded-xl" data-i18n="reportProblem"></button>
-      <button id="cancelBtn" class="hidden w-full border border-slate-300 text-slate-700 text-xs font-bold py-2.5 rounded-xl" data-i18n="cancelOrder"></button>
+      <div id="statusMsg" class="hidden text-sm font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3" role="status" aria-live="polite"></div>
+
+      <section id="arrivalSection" class="hidden space-y-2">
+        <p class="text-xs text-slate-600" data-i18n="arrivalHint"></p>
+        <button id="arrivalBtn" class="w-full min-h-[44px] bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-xl" data-i18n="arrivalBtn"></button>
+      </section>
+
+      <button id="receivedBtn" class="hidden w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-extrabold py-3 rounded-2xl" data-i18n="receivedBtn"></button>
+
+      <section id="evidenceSection" class="hidden space-y-2 bg-red-50 border border-red-200 rounded-2xl p-4" aria-labelledby="evidenceTitle">
+        <h2 id="evidenceTitle" class="text-sm font-extrabold text-red-900" data-i18n="evidenceTitle"></h2>
+        <p class="text-xs text-slate-700" id="evidenceHint" data-i18n="evidenceHint"></p>
+        <input id="evidenceInput" type="file" accept="image/jpeg,image/png,image/webp" multiple class="sr-only" aria-describedby="evidenceHint evidenceCount">
+        <button id="evidenceBtn" type="button" class="w-full min-h-[44px] bg-white border border-red-300 text-red-800 text-sm font-bold py-2.5 rounded-xl disabled:opacity-50" data-i18n="evidenceChoose"></button>
+        <div id="evidenceCount" class="text-xs font-bold text-slate-700" role="status" aria-live="polite"></div>
+        <ul id="evidenceThumbs" class="grid grid-cols-5 gap-2"></ul>
+        <div id="evidenceErr" class="hidden text-xs text-red-700 font-bold" role="alert"></div>
+      </section>
+
+      <button id="disputeBtn" class="hidden w-full min-h-[44px] border border-red-300 text-red-700 text-sm font-bold py-2.5 rounded-xl" data-i18n="reportProblem"></button>
+      <button id="cancelBtn" class="hidden w-full min-h-[44px] border border-slate-300 text-slate-700 text-sm font-bold py-2.5 rounded-xl" data-i18n="cancelOrder"></button>
     </div>
   </div>
 
@@ -146,6 +168,13 @@
 (() => {
   const I18N = {
     fr: {
+      receivedBtn: 'J’ai reçu mon colis', receivedConfirm: 'Confirmer la réception ? Le paiement sera remis au vendeur. Cette action est irréversible.', receivedDone: 'Merci ! Le vendeur est payé.',
+      arrivalBtn: 'L’agence m’a appelé, mon colis est arrivé', arrivalHint: 'Dites-le-nous quand l’agence vous a appelé : nous prévenons le livreur local.', arrivalDone: 'Arrivée confirmée.',
+      absenceTitle: 'Le livreur est devant chez vous. Vous avez 15 min, appelez-le.', absenceLeft: (t) => `Temps restant : ${t}`, absenceOver: 'Le délai est écoulé : le livreur peut repartir avec le colis.', callRider: (p) => `📞 Appeler le livreur${p ? ' (' + p + ')' : ''}`,
+      recipient: (n) => `À remettre à : ${n}`, loadingMap: 'Chargement de la carte…', mapFail: 'La carte est indisponible. Vous pouvez quand même saisir l’adresse.',
+      evidenceTitle: 'Ajouter des photos au litige', evidenceHint: 'Jusqu’à 5 photos du colis (état, contenu). Elles sont envoyées au support.', evidenceChoose: 'Choisir des photos',
+      evidenceCount: (n) => `${n}/5 photos envoyées`, evidenceType: 'Photo refusée : format non pris en charge (JPEG, PNG ou WebP).', evidenceLimit: 'Limite de 5 photos atteinte.', evidenceThumb: (i) => `Photo ${i} envoyée`,
+      cancel403: 'Seul le téléphone qui a payé peut annuler cette commande.',
       tagline: 'Paiement sécurisé & livraison', loading: 'Chargement…', verified: '🏅 Vendeur vérifié (pièce d’identité contrôlée)',
       unverified: 'Vendeur non vérifié', item: 'Article', delivery: 'Livraison', agencyFee: 'Frais d’agence',
       totalEscrow: 'Total à bloquer en séquestre', totalCod: 'Total à payer en cash au livreur',
@@ -176,6 +205,13 @@
         CANCELLED: 'Annulé', EXPIRED: 'Lien expiré' }
     },
     en: {
+      receivedBtn: 'I received my parcel', receivedConfirm: 'Confirm receipt? Payment will be released to the seller. This cannot be undone.', receivedDone: 'Thank you! The seller is being paid.',
+      arrivalBtn: 'The agency called me, my parcel has arrived', arrivalHint: 'Tell us once the agency has called you; we alert the local rider.', arrivalDone: 'Arrival confirmed.',
+      absenceTitle: 'The rider is at your door. You have 15 min, call them.', absenceLeft: (t) => `Time left: ${t}`, absenceOver: 'Time is up: the rider may leave with the parcel.', callRider: (p) => `📞 Call the rider${p ? ' (' + p + ')' : ''}`,
+      recipient: (n) => `Hand over to: ${n}`, loadingMap: 'Loading map…', mapFail: 'The map is unavailable. You can still type the address.',
+      evidenceTitle: 'Add photos to the dispute', evidenceHint: 'Up to 5 photos of the parcel (condition, contents). They go to support.', evidenceChoose: 'Choose photos',
+      evidenceCount: (n) => `${n}/5 photos sent`, evidenceType: 'Photo rejected: unsupported format (JPEG, PNG or WebP).', evidenceLimit: 'Limit of 5 photos reached.', evidenceThumb: (i) => `Photo ${i} sent`,
+      cancel403: 'Only the phone that paid can cancel this order.',
       tagline: 'Secure payment & delivery', loading: 'Loading…', verified: '🏅 Verified seller (ID checked)',
       unverified: 'Unverified seller', item: 'Item', delivery: 'Delivery', agencyFee: 'Agency fee',
       totalEscrow: 'Total to lock in escrow', totalCod: 'Total to pay the rider in cash',
@@ -232,7 +268,15 @@
     if (opts.json !== undefined) { headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
     const res = await fetch(path, { method: opts.method || 'GET', headers, body: opts.body });
     const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.message || T().network), { status: res.status });
+    if (!res.ok) {
+      // Show the server's message; fall back to a friendly text for known business-rule codes.
+      const fb = {
+        fr: { TOO_EARLY: 'Trop tôt : attendez un peu après le ramassage avant de confirmer la réception.', PAYER_IS_SELLER: 'Le numéro de paiement ne peut pas être celui du vendeur.', ALREADY_LINKED: 'Cette commande est déjà liée à un autre compte.', COD_CONFIRM_BY_RIDER: 'Pour un paiement à la livraison, c’est le livreur qui confirme la remise.' },
+        en: { TOO_EARLY: 'Too early: please wait a little after pickup before confirming receipt.', PAYER_IS_SELLER: 'The payment number cannot be the seller’s.', ALREADY_LINKED: 'This order is already linked to another account.', COD_CONFIRM_BY_RIDER: 'For cash on delivery, the rider confirms the handover.' }
+      };
+      const msg = data.message || (fb[lang] && fb[lang][data.error]) || (res.status === 403 ? (lang === 'fr' ? 'Action réservée à l’appareil qui a payé.' : 'This action is reserved for the device that paid.') : T().network);
+      throw Object.assign(new Error(msg), { status: res.status, code: data.error });
+    }
     return data;
   }
 
@@ -315,8 +359,16 @@
     show('followSection', active0 && !v.followingOnTelegram && !!(health && botAvailable));
     show('followingNote', !!v.followingOnTelegram && active0);
     show('cancelBtn', !!v.can.cancel);
+    show('receivedBtn', !!v.can.confirmReceived);
+    show('arrivalSection', !!v.can.confirmArrival);
+    const rc = v.recipient;
+    const rcText = rc && [rc.name, rc.phone].filter(Boolean).join(' · ');
+    show('recipientRow', !!rcText);
+    if (rcText) $('recipientRow').textContent = t.recipient(rcText);
+    renderAbsence(v);
+    renderEvidence(v);
 
-    show('disputeBtn', v.can.dispute);
+    show('disputeBtn', !!v.can.dispute);
     const ol = $('timeline');
     ol.replaceChildren(...v.history.map((h) => {
       const li = document.createElement('li');
@@ -341,8 +393,39 @@
     }
   }
 
+  // Leaflet is only fetched when a map is actually shown (BS-302).
+  let leafletP = null;
+  function loadLeaflet() {
+    if (typeof L !== 'undefined') return Promise.resolve();
+    if (leafletP) return leafletP;
+    leafletP = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet'; css.href = '/vendor/leaflet/leaflet.css';
+      document.head.append(css);
+      const js = document.createElement('script');
+      js.src = '/vendor/leaflet/leaflet.js';
+      js.onload = () => { try { L.Icon.Default.imagePath = '/vendor/leaflet/images/'; } catch (e) {} resolve(); };
+      js.onerror = () => { leafletP = null; reject(new Error('leaflet')); };
+      document.head.append(js);
+    });
+    return leafletP;
+  }
+  function withMap(boxId, fn) {
+    const box = $(boxId);
+    if (!box.firstChild) box.textContent = T().loadingMap;
+    loadLeaflet()
+      .then(() => { if (box.firstChild && box.firstChild.nodeType === 3) box.textContent = ''; fn(); })
+      .catch(() => { box.textContent = T().mapFail; });
+  }
+
+  let mapInit = false;
   function initMap(loc) {
-    if (map || typeof L === 'undefined') return;
+    if (mapInit) return;
+    mapInit = true;
+    withMap('map', () => buildMap(loc));
+  }
+  function buildMap(loc) {
+    if (map) return;
     const start = loc || { lat: 4.0511, lng: 9.7085 };
     map = L.map('map').setView([start.lat, start.lng], loc ? 16 : 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
@@ -352,6 +435,7 @@
   }
 
   $('gpsBtn').onclick = () => {
+    if (!map) return ($('gpsStatus').textContent = T().mapFail);
     if (!navigator.geolocation) return ($('gpsStatus').textContent = T().gpsFail);
     navigator.geolocation.getCurrentPosition((pos) => {
       coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -390,10 +474,14 @@
     catch (e) { showError(e.message); }
   };
 
+  let trackQueued = false;
   let trackMap = null, riderMarker = null, homeMarker = null, trackLine = null;
   function drawTracking(tr, home) {
     const t = T();
-    if (typeof L === 'undefined') return;
+    if (typeof L === 'undefined') {
+      if (!trackQueued) { trackQueued = true; withMap('trackMap', () => { trackQueued = false; if (view && view.tracking) drawTracking(view.tracking, view.dropoffLocation); }); }
+      return;
+    }
     if (!trackMap) {
       trackMap = L.map('trackMap', { zoomControl: false });
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(trackMap);
@@ -427,7 +515,7 @@
       view = await api(`/api/checkout/${encodeURIComponent(orderId)}/cancel`, { method: 'POST' });
       render();
       showError('');
-    } catch (e) { showError(e.message); }
+    } catch (e) { fail(e.status === 403 ? (e.message && e.message !== T().network ? e.message : T().cancel403) : e.message); }
   };
 
   $('disputeBtn').onclick = async () => {
@@ -461,6 +549,98 @@
       $('recordBtn').textContent = T().stop; $('recordBtn').classList.add('pulse');
       timer = setInterval(() => { seconds++; $('voiceTimer').textContent = `${seconds}s / 15s`; if (seconds >= 15) recorder.stop(); }, 1000);
     } catch { $('voiceStatus').textContent = T().micFail; }
+  };
+
+  const flash = (msg) => { $('statusMsg').textContent = msg; show('statusMsg', !!msg); if (msg) setTimeout(() => { if ($('statusMsg').textContent === msg) show('statusMsg', false); }, 8000); };
+  const fail = (msg) => { showError(msg); $('error').scrollIntoView({ block: 'center' }); $('error').focus(); };
+
+  // Buyer absence countdown: the rider waits 15 min from absence.at.
+  let absTimer = null;
+  const WAIT_MS = 15 * 60 * 1000;
+  function renderAbsence(v) {
+    clearInterval(absTimer);
+    const on = !!(v.absence && v.absence.side === 'BUYER');
+    show('absenceBanner', on);
+    if (!on) return;
+    const phone = v.rider && v.rider.phone;
+    show('absenceCall', !!phone);
+    if (phone) { $('absenceCall').textContent = T().callRider(phone); $('absenceCall').href = 'tel:' + phone.replace(/\s/g, ''); }
+    const end = Date.parse(v.absence.at) + WAIT_MS;
+    const tick = () => {
+      const left = end - Date.now();
+      if (left <= 0) { $('absenceTimer').textContent = T().absenceOver; clearInterval(absTimer); return; }
+      const s = Math.ceil(left / 1000);
+      $('absenceTimer').textContent = T().absenceLeft(`${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`);
+    };
+    tick(); absTimer = setInterval(tick, 1000);
+  }
+
+  $('receivedBtn').onclick = async () => {
+    if (!confirm(T().receivedConfirm)) return;
+    $('receivedBtn').disabled = true; showError('');
+    try {
+      view = await api(`/api/checkout/${encodeURIComponent(orderId)}/confirm-received`, { method: 'POST' });
+      render(); flash(T().receivedDone);
+    } catch (e) { fail(e.message); }
+    finally { $('receivedBtn').disabled = false; }
+  };
+  $('arrivalBtn').onclick = async () => {
+    $('arrivalBtn').disabled = true; showError('');
+    try {
+      view = await api(`/api/checkout/${encodeURIComponent(orderId)}/confirm-arrival`, { method: 'POST' });
+      render(); flash(T().arrivalDone);
+    } catch (e) { fail(e.message); }
+    finally { $('arrivalBtn').disabled = false; }
+  };
+
+  // Dispute evidence: downscale to <=1600px JPEG (~0.8), upload one by one, max 5 in total.
+  const MAX_PHOTOS = 5, OK_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+  let evidenceSent = 0, evidenceBusy = false;
+  const evErr = (m) => { $('evidenceErr').textContent = m || ''; show('evidenceErr', !!m); };
+  function renderEvidence(v) {
+    const on = v.status === 'DISPUTED' && !!v.can.addEvidence;
+    show('evidenceSection', on);
+    if (!on) return;
+    evidenceSent = Math.max(evidenceSent, (v.dispute && Array.isArray(v.dispute.evidence)) ? v.dispute.evidence.length : 0);
+    $('evidenceCount').textContent = T().evidenceCount(evidenceSent);
+    $('evidenceBtn').disabled = evidenceBusy || evidenceSent >= MAX_PHOTOS;
+  }
+  function downscale(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const im = new Image();
+      im.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k));
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        c.toBlob((b) => { URL.revokeObjectURL(url); if (b) resolve({ blob: b, preview: URL.createObjectURL(b) }); else reject(new Error('encode')); }, 'image/jpeg', 0.8);
+      };
+      im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+      im.src = url;
+    });
+  }
+  $('evidenceBtn').onclick = () => $('evidenceInput').click();
+  $('evidenceInput').onchange = async () => {
+    const files = Array.from($('evidenceInput').files || []); $('evidenceInput').value = '';
+    if (!files.length || evidenceBusy) return;
+    evErr('');
+    evidenceBusy = true; $('evidenceBtn').disabled = true;
+    try {
+      for (const f of files) {
+        if (evidenceSent >= MAX_PHOTOS) { evErr(T().evidenceLimit); break; }
+        if (!OK_TYPES.includes(f.type)) { evErr(T().evidenceType); continue; }
+        try {
+          const { blob, preview } = await downscale(f);
+          await api(`/api/checkout/${encodeURIComponent(orderId)}/evidence`, { method: 'POST', body: blob, headers: { 'Content-Type': 'image/jpeg' } });
+          evidenceSent++;
+          const li = document.createElement('li'); const im = document.createElement('img');
+          im.src = preview; im.alt = T().evidenceThumb(evidenceSent); im.className = 'w-full aspect-square object-cover rounded-lg border border-red-200';
+          li.append(im); $('evidenceThumbs').append(li);
+          $('evidenceCount').textContent = T().evidenceCount(evidenceSent);
+        } catch (e) { evErr(e.message === 'decode' || e.message === 'encode' ? T().evidenceType : e.message); }
+      }
+    } finally { evidenceBusy = false; $('evidenceBtn').disabled = evidenceSent >= MAX_PHOTOS; }
   };
 
   $('langBtn').onclick = () => { lang = lang === 'fr' ? 'en' : 'fr'; store.set('bs_lang', lang); applyI18n(); };

@@ -12,6 +12,7 @@ export class AppError extends Error {
 
 export const notFound = (what: string) => new AppError('NOT_FOUND', `${what} not found`, 404);
 export const forbidden = (msg = 'Not allowed') => new AppError('FORBIDDEN', msg, 403);
+export const unauthorized = (msg = 'Login required', code = 'UNAUTHORIZED') => new AppError(code, msg, 401);
 export const conflict = (msg: string) => new AppError('CONFLICT', msg, 409);
 export const invalid = (msg: string) => new AppError('INVALID', msg, 400);
 

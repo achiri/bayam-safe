@@ -2,7 +2,7 @@ import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError, conflict, forbidden, invalid, notFound } from '../domain/errors.js';
 import { assertGeoPoint, haversineKm } from '../domain/geo.js';
 import { computePricing, refundPlan, settlementPlan, PayoutPlanLine } from '../domain/money.js';
-import { DISPUTABLE_STATUSES, TERMINAL_STATUSES, deliverableStatus, transition } from '../domain/order-state.js';
+import { DISPUTABLE_STATUSES, TERMINAL_STATUSES, canTransition, deliverableStatus, transition } from '../domain/order-state.js';
 import { detectOperator, normalizeCameroonPhone, normalizeContactPhone } from '../domain/phone.js';
 import { Secrets, newId, newReleaseCode, newTrackingCode, safeEqual } from '../domain/secrets.js';
 import {
@@ -36,6 +36,9 @@ export interface CreateOrderInput {
   destinationCity?: string;
   /** The seller's own rider, by the number on their badge (BSR-XXXX). */
   preferredRiderCode?: string;
+  /** Person receiving the parcel, if not the buyer. */
+  recipientName?: string;
+  recipientPhone?: string;
 }
 
 export interface DeliveryDetailsPatch {
@@ -66,7 +69,9 @@ export interface BuyerView {
   waybillNumber?: string;
   history: { status: OrderStatus; at: string }[];
   payment: { pending: boolean; operator?: Operator; payerPhoneHint?: string };
-  can: { pay: boolean; editDelivery: boolean; dispute: boolean; cancel: boolean };
+  can: { pay: boolean; editDelivery: boolean; dispute: boolean; cancel: boolean; confirmReceived: boolean; confirmArrival: boolean; addEvidence: boolean };
+  recipient?: { name?: string; phone?: string };
+  absence?: { side: 'BUYER' | 'SELLER'; at: string };
   /** Only present for the device that paid (escrow) or the link holder (COD). */
   releaseCode?: string;
   /** True when the order is paid but this device is not the one that paid. */
@@ -81,13 +86,35 @@ export interface BuyerView {
 }
 
 const MAX_PAYOUT_ATTEMPTS = 5;
+const MAX_MUTATE_ATTEMPTS = 3;
+/** Background jobs look at most this many orders per run, in pages of JOB_PAGE_SIZE (oldest first). */
+const JOB_ORDER_CAP = 5000;
+const JOB_PAGE_SIZE = 500;
+const STALL_TRANSIT_MS = 6 * 3600_000;
+const STALL_HUB_MS = 24 * 3600_000;
+const STALL_RETURN_MS = 48 * 3600_000;
 const FOLLOW_TOKEN_TTL_MS = 30 * 60 * 1000;
 const NEAR_KM = 0.4;
 /** Until a rider has the parcel, either side can simply cancel. */
 export const CANCELLABLE: OrderStatus[] = ['PENDING_PAYMENT', 'AWAITING_RIDER', 'RIDER_ASSIGNED'];
 /** "No rider found" is said at most this often per order (the search itself retries every 10 min). */
 const NO_RIDER_NOTICE_MS = 6 * 3600_000;
+/** Statuses in which a rider is busy with a job. */
+const ACTIVE_RIDER_STATUSES: OrderStatus[] = ['RIDER_ASSIGNED', 'IN_TRANSIT', 'LAST_MILE_ASSIGNED', 'OUT_FOR_DELIVERY'];
+const MAX_ACTIVE_JOBS = 3;
+/** Paid but no rider for 48 h → automatic refund. */
+const NO_RIDER_REFUND_MS = 48 * 3600_000;
+/** Rider accepted but didn't pick up within 45 min → job released. */
+const NO_SHOW_MS = 45 * 60_000;
+/** How long a rider waits at the door before taking the parcel back. */
+const BUYER_WAIT_MS = 15 * 60_000;
 const TRACKING_FRESH_MS = 15 * 60 * 1000;
+/** The buyer's "I received it" fallback only works this long after the rider picked the parcel up. */
+const BUYER_CONFIRM_MIN_MS = 20 * 60_000;
+/** A rider reporting an absent buyer must have shared their live position this recently... */
+const ABSENCE_LOCATION_MAX_AGE_MS = 5 * 60_000;
+/** ...and be within this distance (km) of the drop-off pin. */
+const ABSENCE_MAX_DISTANCE_KM = 0.25;
 /** Statuses in which the parcel is travelling towards the buyer. */
 const HEADING_TO_BUYER: OrderStatus[] = ['IN_TRANSIT', 'OUT_FOR_DELIVERY'];
 const PAYMENT_PENDING_WINDOW_MS = 2 * 60 * 1000;
@@ -101,6 +128,14 @@ const PAYABLE: Record<PayoutKind, LedgerAccount> = {
   LAST_MILE_RIDER: 'RIDER_PAYABLE',
   BUYER_REFUND: 'BUYER_REFUND_PAYABLE'
 };
+
+/** Identifies JPEG / PNG / WebP by magic bytes. */
+export function sniffImageMime(b: Buffer): 'image/jpeg' | 'image/png' | 'image/webp' | undefined {
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
+  return undefined;
+}
 
 const text = (v: unknown, name: string, min: number, max: number): string => {
   const s = String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -126,13 +161,38 @@ export class OrderService {
 
   /** Loads an order inside a transaction, applies fn, saves it. fn may touch other entities via repo. */
   private async mutate<T = void>(orderId: string, fn: (o: Order, repo: Repo) => Promise<T> | T): Promise<{ order: Order; result: T }> {
-    return this.store.tx(async (repo) => {
-      const o = await repo.getOrder(orderId);
-      if (!o) throw notFound('Order');
-      const result = await fn(o, repo);
-      const order = await repo.updateOrder(o);
-      return { order, result };
-    });
+    // A concurrent write to any versioned row touched by fn (the order, a rider, the seller) rolls the
+    // whole transaction back with VERSION_CONFLICT. Every callback re-reads the order and re-validates
+    // its preconditions on each run, so it is safe to simply run it again (bounded).
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.store.tx(async (repo) => {
+          const o = await repo.getOrder(orderId);
+          if (!o) throw notFound('Order');
+          const result = await fn(o, repo);
+          const order = await repo.updateOrder(o);
+          return { order, result };
+        });
+      } catch (e) {
+        if (attempt < MAX_MUTATE_ATTEMPTS && e instanceof AppError && e.code === 'VERSION_CONFLICT') continue;
+        throw e;
+      }
+    }
+  }
+
+  /** Pages through every order in `statuses`, oldest first (so none is starved by newer ones), up to `cap`. */
+  private async listAllOldestFirst(statuses: OrderStatus[], opts: { withPaymentReference?: boolean } = {}, cap = JOB_ORDER_CAP): Promise<Order[]> {
+    const out: Order[] = [];
+    let after: { updatedAt: string; id: string } | undefined;
+    while (out.length < cap) {
+      const want = Math.min(JOB_PAGE_SIZE, cap - out.length);
+      const page = await this.store.listOrdersByStatusOldestFirst(statuses, want, after, opts);
+      out.push(...page);
+      if (page.length < want) break;
+      const last = page[page.length - 1];
+      after = { updatedAt: last.updatedAt, id: last.id };
+    }
+    return out;
   }
 
   checkoutUrl(order: Pick<Order, 'id'>, buyerToken: string): string {
@@ -155,8 +215,13 @@ export class OrderService {
       throw invalid('Cash on delivery is only available for deliveries within the same city.');
     }
 
+    if (merchant.suspendedAt) throw new AppError('SELLER_SUSPENDED', `Votre compte vendeur est suspendu${merchant.suspendNote ? ` : ${merchant.suspendNote}` : ''}. Contactez le support.`, 403);
     const buyerPhone = normalizeContactPhone(input.buyerPhone); // contact only: may be a foreign WhatsApp number
     if (buyerPhone === merchant.phone) throw invalid('The buyer phone must be different from your own.');
+    if (input.paymentMode === 'COD' && (await this.buyerPrepaidOnly(buyerPhone))) {
+      throw new AppError('BUYER_PREPAID_ONLY', 'Ce client a refusé 2 livraisons en cash ces 90 derniers jours : paiement à l’avance (séquestre) obligatoire.', 409);
+    }
+    const recipientPhone = input.recipientPhone ? normalizeContactPhone(input.recipientPhone) : undefined;
 
     let originCity = merchant.city;
     let agencyFee = 0;
@@ -193,6 +258,8 @@ export class OrderService {
       merchantVerified: merchant.kycStatus === 'VERIFIED',
       buyerPhone,
       buyerName: optText(input.buyerName, 'Buyer name', 80),
+      recipientName: optText(input.recipientName, 'Recipient name', 80),
+      recipientPhone,
       ...pricing,
       originCity,
       pickupAddress: text(input.pickupAddress, 'Pickup address', 3, 200),
@@ -289,6 +356,8 @@ export class OrderService {
     const active = !TERMINAL_STATUSES.includes(o.status) && o.status !== 'DELIVERED';
     const sessionOk = this.secrets.verifyToken(sessionToken, o.buyerSessionHash);
     const paid = o.status !== 'PENDING_PAYMENT' && !!o.payment.confirmedAt;
+    // Paid escrow: only the device that paid may act (confirm, report a problem, add photos).
+    const mayAct = o.paymentMode !== 'ESCROW' || !paid || sessionOk;
     const showCode = active && (o.paymentMode === 'COD' || (paid && sessionOk));
     return {
       trackingCode: o.trackingCode,
@@ -318,9 +387,15 @@ export class OrderService {
       can: {
         pay: o.status === 'PENDING_PAYMENT' && o.paymentMode === 'ESCROW',
         editDelivery: !NON_EDITABLE.includes(o.status),
-        dispute: DISPUTABLE_STATUSES.includes(o.status),
-        cancel: CANCELLABLE.includes(o.status)
+        dispute: DISPUTABLE_STATUSES.includes(o.status) && mayAct,
+        cancel: CANCELLABLE.includes(o.status),
+        // Cash orders are confirmed by the rider with the code, after the money changed hands.
+        confirmReceived: o.paymentMode === 'ESCROW' && o.status === deliverableStatus(o) && sessionOk,
+        confirmArrival: o.status === 'AT_AGENCY' && mayAct,
+        addEvidence: o.status === 'DISPUTED' && (o.dispute?.evidence?.length ?? 0) < 5 && mayAct
       },
+      recipient: o.recipientName || o.recipientPhone ? { name: o.recipientName, phone: o.recipientPhone } : undefined,
+      absence: o.absence?.side === 'BUYER' && o.status === deliverableStatus(o) ? { side: 'BUYER', at: o.absence.at } : undefined,
       releaseCode: showCode ? this.secrets.decrypt(o.releaseCodeEnc) : undefined,
       releaseCodeOnOtherDevice: active && o.paymentMode === 'ESCROW' && paid && !sessionOk,
       followingOnTelegram: !!o.buyerTelegramId,
@@ -337,19 +412,23 @@ export class OrderService {
       if (patch.landmark !== undefined) o.landmark = optText(patch.landmark, 'Landmark', 200);
       o.updatedAt = new Date().toISOString();
     });
+    const rider = await this.activeRider(order);
+    if (rider) this.events.emit({ type: 'order.address_changed', order, rider });
     return this.view(order);
   }
 
   async attachVoiceNote(orderId: string, buyerToken: string | undefined, mime: string, data: Buffer): Promise<void> {
     await this.requireBuyer(orderId, buyerToken);
-    if (!/^audio\/[a-z0-9.+-]+$/i.test(mime)) throw invalid('Voice note must be an audio file');
+    const baseMime = mime.split(';')[0].trim().toLowerCase();
+    if (!/^audio\/[a-z0-9.+-]+$/.test(baseMime)) throw invalid('Voice note must be an audio file');
     if (data.length < 200 || data.length > 400_000) throw invalid('Voice note must be under 400 KB (about 15 seconds)');
     const mediaId = newId();
     await this.store.tx(async (repo) => {
       const o = await repo.getOrder(orderId);
       if (!o) throw notFound('Order');
       if (NON_EDITABLE.includes(o.status)) throw conflict('Delivery details can no longer be changed.');
-      await repo.putMedia({ id: mediaId, orderId, mime: mime.split(';')[0], data, createdAt: new Date().toISOString() });
+      await repo.putMedia({ id: mediaId, orderId, mime: baseMime, data, createdAt: new Date().toISOString() });
+      if (o.voiceNoteId) await repo.deleteMedia(o.voiceNoteId); // replaced: don't keep the old recording
       o.voiceNoteId = mediaId;
       o.updatedAt = new Date().toISOString();
       await repo.updateOrder(o);
@@ -370,6 +449,12 @@ export class OrderService {
     if (o.status !== 'PENDING_PAYMENT') throw conflict('This order is already paid or closed.');
     if (o.expiresAt && o.expiresAt <= new Date().toISOString()) throw conflict('This payment link has expired.');
     const payerPhone = normalizeCameroonPhone(payerPhoneInput);
+    // The seller must not pay their own order (it would let them hold the paying device's session).
+    const merchant = await this.store.getUser(o.merchantId);
+    const sellerNumbers = [o.merchantPhone, merchant?.phone, merchant?.payoutPhone, merchant?.pendingPayoutPhone].filter(Boolean);
+    if (sellerNumbers.includes(payerPhone)) {
+      throw new AppError('PAYER_IS_SELLER', 'Le numéro qui paie ne peut pas être celui du vendeur.', 400);
+    }
 
     if (o.payment.reference) {
       await this.syncPayment(o);
@@ -398,7 +483,8 @@ export class OrderService {
         reference: res.reference,
         pendingSessionHash: this.secrets.hashToken(sessionToken),
         initiatedAt: now,
-        lastCheckedAt: now
+        lastCheckedAt: now,
+        attempts: [...(ord.payment.attempts ?? []), { reference: res.reference, payerPhone, at: now }].slice(-20)
       };
       ord.updatedAt = now;
     });
@@ -440,9 +526,18 @@ export class OrderService {
     const isCurrentAttempt = order.payment.reference === tx.reference;
     if (order.status !== 'PENDING_PAYMENT' || !isCurrentAttempt || tx.amount !== order.total) {
       if (order.payment.confirmedAt && isCurrentAttempt) return; // already applied
-      // Money arrived that we can't match cleanly (late/duplicate attempt, wrong amount, expired order).
-      if (await this.store.markEventProcessed(`mismatch:${tx.reference}`)) {
-        this.events.emit({ type: 'order.payment_mismatch', order, paidAmount: tx.amount });
+      // Money arrived that we can't match cleanly (late/duplicate attempt, wrong amount, expired order):
+      // send it straight back to the number that paid, and tell the admins.
+      // No pre-marker: the idempotent `stray:<ref>` journal (written in the same transaction as the
+      // refund payout) is the only dedupe key, so a failed attempt is simply retried on the next
+      // webhook/poll, and duplicates neither re-refund nor re-notify.
+      try {
+        const booked = await this.refundStrayPayment(order, tx);
+        if (booked) this.events.emit({ type: 'order.payment_mismatch', order: booked.order, paidAmount: tx.amount });
+        if (booked?.needsReview) this.events.emit({ type: 'payout.attention', order: booked.order, payout: booked.needsReview });
+        if (booked) await this.processPayouts(booked.order.id);
+      } catch (e) {
+        console.error('[payment] stray refund failed:', e);
       }
       return;
     }
@@ -473,10 +568,18 @@ export class OrderService {
     await this.offerToRiders(paid, 'FIRST');
   }
 
-  async buyerOpenDispute(orderId: string, buyerToken: string | undefined, reason: string): Promise<BuyerView> {
-    await this.requireBuyer(orderId, buyerToken);
+  /** Paid escrow orders: only the device that paid may act for the buyer. */
+  private requirePayerDevice(o: Order, sessionToken: string | undefined) {
+    if (o.paymentMode === 'ESCROW' && o.payment.confirmedAt && !this.secrets.verifyToken(sessionToken, o.buyerSessionHash)) {
+      throw forbidden('Seul le téléphone qui a payé peut faire cette action.');
+    }
+  }
+
+  async buyerOpenDispute(orderId: string, buyerToken: string | undefined, reason: string, sessionToken?: string): Promise<BuyerView> {
+    const cur = await this.requireBuyer(orderId, buyerToken);
+    this.requirePayerDevice(cur, sessionToken);
     const order = await this.openDispute(orderId, 'BUYER', reason);
-    return this.view(order);
+    return this.view(order, sessionToken);
   }
 
   // ------------------------------------------------------------------ seller's own rider
@@ -508,10 +611,15 @@ export class OrderService {
    * session is remembered, so the release code is only sent if this device is the one that pays.
    */
   async createFollowLink(orderId: string, buyerToken: string | undefined, sessionToken?: string) {
-    await this.requireBuyer(orderId, buyerToken);
+    const cur = await this.requireBuyer(orderId, buyerToken);
+    // Once paid, only the paying device may (re)bind a Telegram account: it will receive the release code.
+    if (cur.payment.confirmedAt && !this.secrets.verifyToken(sessionToken, cur.buyerSessionHash)) {
+      throw forbidden('Seul le téléphone qui a payé peut lier Telegram à cette commande.');
+    }
     const session = sessionToken && /^[A-Za-z0-9_-]{20,64}$/.test(sessionToken) ? sessionToken : Secrets.token();
     const token = Secrets.token(16);
     await this.mutate(orderId, (o) => {
+      if (o.payment.confirmedAt && !this.secrets.verifyToken(session, o.buyerSessionHash)) throw forbidden('Seul le téléphone qui a payé peut lier Telegram à cette commande.');
       o.followTokenHash = this.secrets.hashToken(token);
       o.followTokenExpiresAt = new Date(Date.now() + FOLLOW_TOKEN_TTL_MS).toISOString();
       o.followSessionHash = this.secrets.hashToken(session);
@@ -528,6 +636,9 @@ export class OrderService {
       const fresh = !!o.followTokenExpiresAt && o.followTokenExpiresAt > new Date().toISOString();
       if (!fresh || !this.secrets.verifyToken(m[2], o.followTokenHash)) {
         throw new AppError('LINK_EXPIRED', 'Ce lien de suivi a expiré. Ouvrez à nouveau la page de paiement et appuyez sur « Suivre sur Telegram ».', 410);
+      }
+      if (o.buyerTelegramId && o.buyerTelegramId !== telegramId) {
+        throw new AppError('ALREADY_LINKED', 'Cette commande est déjà suivie depuis un autre compte Telegram.', 409);
       }
       o.buyerTelegramId = telegramId;
       o.buyerLang = lang;
@@ -597,6 +708,10 @@ export class OrderService {
     const current = await this.store.getOrder(orderId);
     const chosen = current?.status === 'AWAITING_RIDER' && current.preferredRiderId === rider.id;
     if (!rider.onDuty && !chosen) throw invalid('Go on duty first (/on_duty).');
+    const active = await this.store.listOrders({ riderId: rider.id, statuses: ACTIVE_RIDER_STATUSES, limit: 20 });
+    if (active.length >= MAX_ACTIVE_JOBS) {
+      throw new AppError('TOO_MANY_JOBS', `Vous avez déjà ${active.length} courses en cours. Terminez-en une avant d’en accepter une autre.`, 409);
+    }
     try {
       const { order } = await this.mutate(orderId, async (o, repo) => {
         const r = await repo.getRider(rider.id);
@@ -641,6 +756,8 @@ export class OrderService {
       if (o.status === 'RIDER_ASSIGNED' && o.firstMileRiderId === rider.id) {
         await this.releaseCodReserve(o, repo);
         o.firstMileRiderId = undefined;
+        if (o.preferredRiderId === rider.id) o.preferredRiderId = undefined; // open the job to everyone
+        this.resetStallReminders(o);
         transition(o, 'AWAITING_RIDER', 'rider released the job');
         return 'FIRST' as const;
       }
@@ -656,9 +773,11 @@ export class OrderService {
     return order;
   }
 
-  async confirmPickup(riderTelegramId: number, orderId: string): Promise<Order> {
+  async confirmPickup(riderTelegramId: number, orderId: string, photoFileId?: string): Promise<Order> {
     const rider = await this.riders.requireApproved(riderTelegramId);
     const { order } = await this.mutate(orderId, (o) => {
+      if (photoFileId) o.pickupPhotoFileId = photoFileId;
+      o.absence = undefined;
       if (o.status === 'RIDER_ASSIGNED' && o.firstMileRiderId === rider.id) transition(o, 'IN_TRANSIT', 'picked up from merchant');
       else if (o.status === 'LAST_MILE_ASSIGNED' && o.lastMileRiderId === rider.id) transition(o, 'OUT_FOR_DELIVERY', 'collected from agency');
       else throw conflict('Nothing to pick up for you on this order.');
@@ -667,7 +786,7 @@ export class OrderService {
     return order;
   }
 
-  async recordAgencyDropoff(riderTelegramId: number, orderId: string, waybillNumber: string, waybillPhotoFileId: string): Promise<Order> {
+  async recordAgencyDropoff(riderTelegramId: number, orderId: string, waybillNumber: string, waybillPhotoFileId: string, actualAgencyFee?: number): Promise<Order> {
     const rider = await this.riders.requireApproved(riderTelegramId);
     const waybill = waybillNumber.trim().toUpperCase();
     if (!/^[A-Z0-9/-]{3,30}$/.test(waybill)) throw invalid('Invalid waybill number');
@@ -677,9 +796,14 @@ export class OrderService {
       if (o.status !== 'IN_TRANSIT' || o.firstMileRiderId !== rider.id) throw conflict('This parcel is not in transit with you.');
       o.waybillNumber = waybill;
       o.waybillPhotoFileId = waybillPhotoFileId;
+      if (actualAgencyFee !== undefined && actualAgencyFee > o.agencyFee) {
+        if (!Number.isSafeInteger(actualAgencyFee) || actualAgencyFee > o.agencyFee + 50_000) throw invalid('Montant de l’agence invalide');
+        o.agencyFeeClaim = { amount: actualAgencyFee, status: 'PENDING', at: new Date().toISOString() };
+      }
       transition(o, 'AT_AGENCY', `waybill ${waybill}`);
     });
     this.events.emit({ type: 'order.status', order });
+    if (order.agencyFeeClaim?.status === 'PENDING') this.events.emit({ type: 'order.agency_fee_claim', order });
     return order;
   }
 
@@ -711,7 +835,7 @@ export class OrderService {
         o.codeAttempts += 1;
         o.updatedAt = new Date().toISOString();
         if (o.codeAttempts >= this.settings.maxCodeAttempts) {
-          this.applyDispute(o, 'SYSTEM', 'Too many wrong release codes');
+          this.applyDispute(o, 'SYSTEM', 'Too many wrong release codes', 'CODE_LOCK');
         }
         return { ok: false, attemptsLeft: Math.max(0, this.settings.maxCodeAttempts - o.codeAttempts) };
       }
@@ -785,17 +909,22 @@ export class OrderService {
     transition(o, 'DELIVERED', note);
     const riders = await this.loadRiders(o, repo);
 
+    const merchant = await repo.getUser(o.merchantId);
+    if (merchant?.payoutPhone) o.merchantPhone = merchant.payoutPhone;
+
     if (o.paymentMode === 'ESCROW') {
-      const plan = settlementPlan(o);
-      o.payouts = this.buildPayouts(o, plan, riders);
+      const plan = this.withAgencyExtra(o, settlementPlan(o));
+      const recovered = await this.recoverSellerDebt(o, plan, merchant, repo);
+      o.payouts = [...o.payouts, ...this.buildPayouts(o, plan.filter((l) => l.amount > 0), riders)];
       await repo.addJournal({
         key: `order:${o.id}:settle`,
         description: `Delivery confirmed for ${o.trackingCode}`,
         createdAt: now,
         lines: [
           { account: 'ESCROW', refId: o.id, amount: -o.total },
-          ...plan.map((l) => ({ account: PAYABLE[l.kind], refId: o.id, amount: l.amount })),
-          { account: 'PLATFORM_REVENUE', refId: o.id, amount: o.commission }
+          ...plan.filter((l) => l.amount > 0).map((l) => ({ account: PAYABLE[l.kind], refId: o.id, amount: l.amount })),
+          { account: 'PLATFORM_REVENUE', refId: o.id, amount: o.commission },
+          ...(recovered ? [{ account: 'MERCHANT_RECEIVABLE' as LedgerAccount, refId: o.merchantId, amount: recovered }] : [])
         ]
       });
     } else {
@@ -806,16 +935,19 @@ export class OrderService {
       rider.floatReserved = Math.max(0, rider.floatReserved - o.codReserved);
       rider.floatBalance -= o.itemPrice;
       o.codReserved = 0;
-      const merchantShare = o.itemPrice - o.commission;
-      o.payouts = merchantShare > 0 ? this.buildPayouts(o, [{ kind: 'MERCHANT', amount: merchantShare }], riders) : [];
+      const plan: PayoutPlanLine[] = [{ kind: 'MERCHANT', amount: o.itemPrice - o.commission }];
+      const recovered = await this.recoverSellerDebt(o, plan, merchant, repo);
+      const merchantShare = plan[0].amount;
+      o.payouts = [...o.payouts, ...(merchantShare > 0 ? this.buildPayouts(o, plan, riders) : [])];
       await repo.addJournal({
         key: `order:${o.id}:cod-settle`,
         description: `COD delivery confirmed for ${o.trackingCode}`,
         createdAt: now,
         lines: [
           { account: 'RIDER_FLOAT', refId: rider.id, amount: -o.itemPrice },
-          { account: 'MERCHANT_PAYABLE', refId: o.id, amount: merchantShare },
-          { account: 'PLATFORM_REVENUE', refId: o.id, amount: o.commission }
+          ...(merchantShare > 0 ? [{ account: 'MERCHANT_PAYABLE' as LedgerAccount, refId: o.id, amount: merchantShare }] : []),
+          { account: 'PLATFORM_REVENUE', refId: o.id, amount: o.commission },
+          ...(recovered ? [{ account: 'MERCHANT_RECEIVABLE' as LedgerAccount, refId: o.merchantId, amount: recovered }] : [])
         ]
       });
     }
@@ -827,45 +959,69 @@ export class OrderService {
     }
   }
 
-  private applyDispute(o: Order, openedBy: Dispute['openedBy'], reason: string) {
-    o.dispute = { reason, openedBy, openedAt: new Date().toISOString(), fromStatus: o.status };
+  private applyDispute(o: Order, openedBy: Dispute['openedBy'], reason: string, kind: Dispute['kind'] = 'OTHER') {
+    const returnRequired = kind === 'BUYER_ABSENT' || kind === 'BUYER_REFUSED' || kind === 'SELLER_RETURN';
+    o.dispute = { reason, openedBy, openedAt: new Date().toISOString(), fromStatus: o.status, kind, returnRequired };
+    if (o.paymentMode === 'COD' && (kind === 'BUYER_ABSENT' || kind === 'BUYER_REFUSED')) o.buyerRefusalAt = new Date().toISOString();
     transition(o, 'DISPUTED', `${openedBy.toLowerCase()}: ${reason}`);
   }
 
-  async openDispute(orderId: string, openedBy: Dispute['openedBy'], reasonInput: string): Promise<Order> {
+  async openDispute(orderId: string, openedBy: Dispute['openedBy'], reasonInput: string, kind: Dispute['kind'] = 'OTHER'): Promise<Order> {
     const reason = text(reasonInput, 'Reason', 3, 500);
     const { order } = await this.mutate(orderId, (o) => {
       if (!DISPUTABLE_STATUSES.includes(o.status)) throw conflict('A problem can only be reported while the parcel is on its way.');
-      this.applyDispute(o, openedBy, reason);
+      this.applyDispute(o, openedBy, reason, kind);
     });
     this.events.emit({ type: 'order.disputed', order });
     return order;
   }
 
   /** Admin decision after hearing both sides (and getting the parcel back to the merchant if refunding). */
-  async resolveDispute(orderId: string, resolution: 'REFUND_BUYER' | 'RELEASE_TO_MERCHANT', note?: string): Promise<Order> {
+  async resolveDispute(
+    orderId: string,
+    resolution: 'REFUND_BUYER' | 'RELEASE_TO_MERCHANT' | 'SPLIT',
+    note?: string,
+    opts: { buyerAmount?: number; by?: string; markReturnReceived?: boolean } = {}
+  ): Promise<Order> {
     const { order } = await this.mutate(orderId, async (o, repo) => {
       if (o.status !== 'DISPUTED' || !o.dispute) throw conflict('Order is not disputed.');
+      // Recorded in the same transaction as the refund: if the refund fails, nothing is half-done.
+      if (opts.markReturnReceived && !o.dispute.returnReceivedAt) o.dispute.returnReceivedAt = new Date().toISOString();
       o.dispute.resolution = resolution;
       o.dispute.resolutionNote = optText(note, 'Note', 500);
       o.dispute.resolvedAt = new Date().toISOString();
+      const by = opts.by ?? 'admin';
 
       if (resolution === 'RELEASE_TO_MERCHANT') {
-        await this.settle(o, repo, 'released by admin');
+        o.buyerRefusalAt = undefined; // the refusal report was wrong: it must not count against the buyer
+        await this.settle(o, repo, `released by ${by}`);
+        return;
+      }
+      const seen = new Set(o.history.map((h) => h.status));
+      const legs = refundPlan(o, { pickedUp: seen.has('IN_TRANSIT'), reachedAgency: seen.has('AT_AGENCY'), lastMileRan: seen.has('OUT_FOR_DELIVERY') });
+      if (resolution === 'SPLIT') {
+        if (o.paymentMode !== 'ESCROW') throw invalid('A split only applies to prepaid orders.');
+        await this.bookSplit(o, repo, legs, opts.buyerAmount ?? -1);
+        // Ends in DELIVERED (so payouts settle it) but it is NOT a normal delivery: o.dispute.resolution === 'SPLIT'.
+        // Notifications must check that before saying "delivered" (bot's concern).
+        transition(o, 'DELIVERED', `split decided by ${by} (dispute split, not a normal delivery)`);
         return;
       }
       if (o.paymentMode === 'ESCROW') {
-        const seen = new Set(o.history.map((h) => h.status));
-        const plan = refundPlan(o, {
-          pickedUp: seen.has('IN_TRANSIT'),
-          reachedAgency: seen.has('AT_AGENCY'),
-          lastMileRan: seen.has('OUT_FOR_DELIVERY')
-        });
-        await this.bookRefund(o, repo, plan);
+        if (o.dispute.kind === 'SELLER_RETURN') {
+          // The seller asked for the return: buyer gets everything back, riders are paid by the seller.
+          await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total }]);
+          await this.chargeSellerForRiders(o, repo, legs.filter((l) => l.kind !== 'BUYER_REFUND'), 'return requested by seller');
+        } else {
+          await this.bookRefund(o, repo, legs);
+        }
       } else {
         await this.releaseCodReserve(o, repo);
+        if (o.dispute.kind === 'SELLER_RETURN') {
+          await this.chargeSellerForRiders(o, repo, [{ kind: 'FIRST_MILE_RIDER' as PayoutKind, amount: o.deliveryFee }].filter((l) => l.amount > 0), 'return requested by seller');
+        }
       }
-      transition(o, 'REFUNDED', 'refunded by admin');
+      transition(o, 'REFUNDED', `refunded by ${by}`);
     });
     this.events.emit({ type: 'order.status', order });
     await this.processPayouts(order.id);
@@ -873,14 +1029,24 @@ export class OrderService {
   }
 
   private async bookRefund(o: Order, repo: Repo, plan: PayoutPlanLine[]) {
-    const riders = await this.loadRiders(o, repo);
-    o.payouts = this.buildPayouts(o, plan, riders);
-    await repo.addJournal({
+    const added = await repo.addJournal({
       key: `order:${o.id}:refund`,
       description: `Refund for ${o.trackingCode}`,
       createdAt: new Date().toISOString(),
       lines: [{ account: 'ESCROW', refId: o.id, amount: -o.total }, ...plan.map((l) => ({ account: PAYABLE[l.kind], refId: o.id, amount: l.amount }))]
     });
+    if (!added) {
+      // Already booked once: queueing payouts again would pay the money out twice.
+      console.warn(`[refund] ${o.trackingCode}: refund journal already exists, not queueing payouts again`);
+      return;
+    }
+    const riders = await this.loadRiders(o, repo);
+    o.payouts = [...o.payouts, ...this.buildPayouts(o, plan.filter((l) => l.amount > 0), riders)];
+  }
+
+  /** A new waiting period starts: the 6 h / 24 h "no rider" reminders may fire again (the 48 h refund anchor does not move). */
+  private resetStallReminders(o: Order) {
+    if (o.reminders?.length) o.reminders = o.reminders.filter((k) => k !== 'stalled-6h' && k !== 'stalled-24h');
   }
 
   /** Merchant or admin cancels before the parcel is picked up. Paid escrow is refunded in full. */
@@ -899,13 +1065,18 @@ export class OrderService {
         }
         transition(o, 'CANCELLED', `cancelled by ${by} before payment`);
       } else if (o.status === 'AWAITING_RIDER' || o.status === 'RIDER_ASSIGNED') {
+        const lateSellerCancel = by === 'seller' && o.status === 'RIDER_ASSIGNED' && !!o.firstMileRiderId;
         if (o.paymentMode === 'COD') {
           await this.releaseCodReserve(o, repo);
-          transition(o, 'CANCELLED', `cancelled by ${by} before pickup`);
         } else {
           await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total }]);
-          transition(o, 'REFUNDED', `cancelled by ${by} before pickup, full refund`);
         }
+        if (lateSellerCancel) {
+          const fee = Math.floor(o.deliveryFee / 2);
+          if (fee > 0) await this.chargeSellerForRiders(o, repo, [{ kind: 'FIRST_MILE_RIDER', amount: fee }], 'seller cancelled after the rider set off');
+        }
+        if (o.paymentMode === 'COD') transition(o, 'CANCELLED', `cancelled by ${by} before pickup`);
+        else transition(o, 'REFUNDED', `cancelled by ${by} before pickup, full refund`);
       } else {
         throw new AppError('ALREADY_PICKED_UP', 'Le colis a déjà été récupéré : il faut d’abord le retourner au vendeur.', 409);
       }
@@ -923,14 +1094,18 @@ export class OrderService {
     const o = await this.store.getOrder(orderId);
     if (!o || o.merchantId !== merchantId) throw notFound('Order');
     if (DISPUTABLE_STATUSES.includes(o.status)) {
-      return { order: await this.openDispute(orderId, 'MERCHANT', 'Annulation demandée par le vendeur : retour du colis'), kind: 'return_opened' };
+      return { order: await this.openDispute(orderId, 'MERCHANT', 'Annulation demandée par le vendeur : retour du colis', 'SELLER_RETURN'), kind: 'return_opened' };
     }
     return { order: await this.cancel(orderId, { merchantId }), kind: 'cancelled' };
   }
 
   /** The buyer cancels from the checkout page or Telegram, until the parcel is picked up. */
   async buyerCancel(orderId: string, buyerToken: string | undefined, sessionToken?: string): Promise<BuyerView> {
-    await this.requireBuyer(orderId, buyerToken);
+    const current = await this.requireBuyer(orderId, buyerToken);
+    if (!CANCELLABLE.includes(current.status)) return this.view(await this.cancel(orderId, { buyer: true }), sessionToken); // gives the precise reason
+    if (current.paymentMode === 'ESCROW' && current.payment.confirmedAt && !this.secrets.verifyToken(sessionToken, current.buyerSessionHash)) {
+      throw forbidden('Une commande payée ne peut être annulée que depuis le téléphone qui a payé.');
+    }
     const o = await this.cancel(orderId, { buyer: true });
     return this.view(o, sessionToken);
   }
@@ -939,6 +1114,10 @@ export class OrderService {
   async buyerCancelFromTelegram(orderId: string, telegramId: number): Promise<Order> {
     const o = await this.store.getOrder(orderId);
     if (!o || o.buyerTelegramId !== telegramId) throw notFound('Order');
+    if (!CANCELLABLE.includes(o.status)) return this.cancel(orderId, { buyer: true }); // gives the precise reason
+    if (o.paymentMode === 'ESCROW' && o.payment.confirmedAt && (!o.buyerSessionHash || o.buyerSessionHash !== o.followSessionHash)) {
+      throw forbidden('Une commande payée ne peut être annulée que depuis le téléphone qui a payé (ouvrez la page de paiement sur ce téléphone).');
+    }
     return this.cancel(orderId, { buyer: true });
   }
 
@@ -960,7 +1139,7 @@ export class OrderService {
 
   /** Re-sends offers for jobs nobody has accepted for a while. */
   async reofferStale(olderThanMs = 10 * 60_000, now = Date.now()): Promise<number> {
-    const waiting = await this.store.listOrders({ statuses: ['AWAITING_RIDER', 'AT_DESTINATION_HUB'], limit: 200 });
+    const waiting = await this.listAllOldestFirst(['AWAITING_RIDER', 'AT_DESTINATION_HUB']);
     let n = 0;
     for (const o of waiting) {
       if (now - Date.parse(o.updatedAt) < olderThanMs) continue;
@@ -968,6 +1147,630 @@ export class OrderService {
       n++;
     }
     return n;
+  }
+
+  // ------------------------------------------------------------------ money helpers
+
+  /** An approved extra agency fee moves from the seller's share to the first-mile rider who paid it. */
+  private withAgencyExtra(o: Order, plan: PayoutPlanLine[]): PayoutPlanLine[] {
+    const claim = o.agencyFeeClaim;
+    if (!claim || claim.status !== 'APPROVED') return plan;
+    const merchant = plan.find((l) => l.kind === 'MERCHANT');
+    const extra = Math.min(claim.amount - o.agencyFee, merchant?.amount ?? 0);
+    if (!merchant || extra <= 0) return plan;
+    merchant.amount -= extra;
+    const first = plan.find((l) => l.kind === 'FIRST_MILE_RIDER');
+    if (first) first.amount += extra;
+    else plan.push({ kind: 'FIRST_MILE_RIDER', amount: extra });
+    return plan;
+  }
+
+  /** Takes what the seller owes the platform out of their share of this sale. Returns the amount recovered. */
+  private async recoverSellerDebt(o: Order, plan: PayoutPlanLine[], merchant: User | undefined, repo: Repo): Promise<number> {
+    const owed = merchant?.owedToPlatform ?? 0;
+    const line = plan.find((l) => l.kind === 'MERCHANT');
+    if (!merchant || owed <= 0 || !line || line.amount <= 0) return 0;
+    const take = Math.min(owed, line.amount);
+    line.amount -= take;
+    merchant.owedToPlatform = owed - take;
+    merchant.updatedAt = new Date().toISOString();
+    await repo.updateUser(merchant);
+    return take;
+  }
+
+  /** Riders are paid now; the seller owes it to the platform and it comes out of their next payouts. */
+  private async chargeSellerForRiders(o: Order, repo: Repo, lines: PayoutPlanLine[], why: string) {
+    const valid = lines.filter((l) => l.amount > 0);
+    if (!valid.length) return;
+    const total = valid.reduce((s, l) => s + l.amount, 0);
+    const slug = why.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+    const added = await repo.addJournal({
+      key: `order:${o.id}:seller-charge:${slug}`,
+      description: `Rider fee charged to the seller (${why}) for ${o.trackingCode}`,
+      createdAt: new Date().toISOString(),
+      lines: [
+        ...valid.map((l) => ({ account: PAYABLE[l.kind], refId: o.id, amount: l.amount })),
+        { account: 'MERCHANT_RECEIVABLE' as LedgerAccount, refId: o.merchantId, amount: -total }
+      ]
+    });
+    if (!added) {
+      console.warn(`[seller-charge] ${o.trackingCode}: "${why}" already charged, skipping`);
+      return;
+    }
+    const riders = await this.loadRiders(o, repo);
+    o.payouts = [...o.payouts, ...this.buildPayouts(o, valid, riders)];
+    const m = await repo.getUser(o.merchantId);
+    if (m) {
+      m.owedToPlatform = (m.owedToPlatform ?? 0) + total;
+      m.updatedAt = new Date().toISOString();
+      await repo.updateUser(m);
+    }
+  }
+
+  /** Admin split: riders keep the legs they ran, the buyer gets `buyerAmount`, the seller the rest (minus commission). */
+  private async bookSplit(o: Order, repo: Repo, legs: PayoutPlanLine[], buyerAmount: number) {
+    const riderLines = legs.filter((l) => l.kind !== 'BUYER_REFUND' && l.amount > 0);
+    const riderTotal = riderLines.reduce((s, l) => s + l.amount, 0);
+    const max = o.total - riderTotal;
+    if (!Number.isSafeInteger(buyerAmount) || buyerAmount < 0 || buyerAmount > max) {
+      throw invalid(`Le remboursement du client doit être entre 0 et ${max} FCFA.`);
+    }
+    const merchantGross = max - buyerAmount;
+    const commission = Math.round((merchantGross * this.settings.commissionPct) / 100);
+    const plan: PayoutPlanLine[] = riderLines.map((l) => ({ ...l }));
+    if (buyerAmount > 0) plan.push({ kind: 'BUYER_REFUND', amount: buyerAmount });
+    if (merchantGross - commission > 0) plan.push({ kind: 'MERCHANT', amount: merchantGross - commission });
+    o.commission = commission;
+    // Same treatment as a normal settlement: payout number, approved agency extra, seller debt.
+    const merchant = await repo.getUser(o.merchantId);
+    if (merchant?.payoutPhone) o.merchantPhone = merchant.payoutPhone;
+    this.withAgencyExtra(o, plan);
+    const recovered = await this.recoverSellerDebt(o, plan, merchant, repo);
+    const lines = plan.filter((l) => l.amount > 0);
+    const riders = await this.loadRiders(o, repo);
+    o.payouts = [...o.payouts, ...this.buildPayouts(o, lines, riders)];
+    const added = await repo.addJournal({
+      key: `order:${o.id}:split`,
+      description: `Split decision for ${o.trackingCode}`,
+      createdAt: new Date().toISOString(),
+      lines: [
+        { account: 'ESCROW', refId: o.id, amount: -o.total },
+        ...lines.map((l) => ({ account: PAYABLE[l.kind], refId: o.id, amount: l.amount })),
+        { account: 'PLATFORM_REVENUE', refId: o.id, amount: commission },
+        ...(recovered ? [{ account: 'MERCHANT_RECEIVABLE' as LedgerAccount, refId: o.merchantId, amount: recovered }] : [])
+      ]
+    });
+    if (!added) throw conflict('This split was already booked.');
+  }
+
+  /** Money that can't be matched to an unpaid order (late duplicate, wrong amount) goes straight back. */
+  /**
+   * Returns undefined when nothing new was booked (duplicate delivery, or zero amount). Otherwise the
+   * updated order, plus the NEEDS_REVIEW payout when the payer's number is unknown (an admin must then
+   * refund by hand: the money is on the books either way, never silently dropped).
+   */
+  private async refundStrayPayment(order: Order, tx: Transaction): Promise<{ order: Order; needsReview?: Payout } | undefined> {
+    if (!(tx.amount > 0)) return undefined;
+    const now = new Date().toISOString();
+    const { order: saved, result } = await this.mutate(order.id, async (o, repo) => {
+      // Looked up on the fresh row: the attempt list may have changed since the caller's snapshot.
+      const attempt = o.payment.attempts?.find((a) => a.reference === tx.reference);
+      const phone = attempt?.payerPhone ?? (o.payment.reference === tx.reference ? o.payment.payerPhone : undefined);
+      const added = await repo.addJournal({
+        key: `stray:${tx.reference}`,
+        description: `Unmatched payment refunded for ${o.trackingCode}`,
+        createdAt: now,
+        lines: [
+          { account: 'GATEWAY_CLEARING', refId: o.id, amount: -tx.amount },
+          { account: 'BUYER_REFUND_PAYABLE', refId: o.id, amount: tx.amount }
+        ]
+      });
+      if (!added) return undefined;
+      const payout: Payout = phone
+        ? { id: newId(), kind: 'BUYER_REFUND', phone, amount: tx.amount, status: 'PENDING', attempts: 0 }
+        : { id: newId(), kind: 'BUYER_REFUND', phone: '', amount: tx.amount, status: 'NEEDS_REVIEW', attempts: 0, lastError: `Payer number unknown for provider reference ${tx.reference}: refund by hand` };
+      o.payouts.push(payout);
+      if (o.status === 'PENDING_PAYMENT' && o.payment.reference === tx.reference) {
+        // Wrong amount on the current attempt: refund it and let the buyer pay again.
+        o.payment = { ...o.payment, reference: undefined, pendingSessionHash: undefined };
+      }
+      return payout;
+    });
+    if (!result) return undefined;
+    return { order: saved, needsReview: result.status === 'NEEDS_REVIEW' ? { ...result } : undefined };
+  }
+
+  /** Two refused (or missed) cash deliveries in 90 days → this buyer number pays upfront only. */
+  async buyerPrepaidOnly(phone: string): Promise<boolean> {
+    let normalized: string;
+    try {
+      normalized = normalizeContactPhone(phone);
+    } catch {
+      return false;
+    }
+    const since = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    return (await this.store.countBuyerRefusals(normalized, since)) >= 2;
+  }
+
+  // ------------------------------------------------------------------ timeouts (background job)
+
+  private statusSince(o: Order): number {
+    for (let i = o.history.length - 1; i >= 0; i--) if (o.history[i].status === o.status) return Date.parse(o.history[i].at);
+    return Date.parse(o.updatedAt);
+  }
+
+  /** Marks reminder keys as sent; returns true if the first key was new. */
+  private async remindOnce(o: Order, keys: string[]): Promise<boolean> {
+    if (o.reminders?.includes(keys[0])) return false;
+    const res = await this.mutate(o.id, (ord) => {
+      if (ord.reminders?.includes(keys[0])) throw conflict('already reminded');
+      ord.reminders = [...new Set([...(ord.reminders ?? []), ...keys])];
+    }).catch(() => undefined);
+    return !!res;
+  }
+
+  /**
+   * Nothing waits forever:
+   * - no rider 6 h / 24 h (since the order last went back to the pool) -> reminders;
+   * - no rider 48 h after the order was first paid (escrow: payment.confirmedAt, COD: createdAt) ->
+   *   automatic full refund / cancellation. Claim/release cycles do NOT restart this clock;
+   * - a rider who accepted but didn't pick up within 45 min is released and the job re-offered;
+   * - parcel at the departure agency for 24 h -> reminder to confirm the bus arrived;
+   * - stalls with no automatic action (in transit / out for delivery > 6 h, at the destination hub > 24 h,
+   *   a required return not received > 48 h) -> one admin-facing `order.stalled` event each.
+   * Every automatic decision is re-checked inside the transaction against the fresh row.
+   */
+  async enforceTimeouts(now = Date.now()): Promise<{ reminded: number; refunded: number; released: number }> {
+    const res = { reminded: 0, refunded: 0, released: 0 };
+    const list = await this.listAllOldestFirst([
+      'AWAITING_RIDER', 'RIDER_ASSIGNED', 'LAST_MILE_ASSIGNED', 'AT_AGENCY',
+      'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'AT_DESTINATION_HUB', 'DISPUTED'
+    ]);
+    for (const o of list) {
+      const age = now - this.statusSince(o);
+      try {
+        if (o.status === 'AWAITING_RIDER') {
+          if (now - this.refundAnchor(o) >= NO_RIDER_REFUND_MS) {
+            if (await this.autoRefundUnpicked(o.id, now)) res.refunded++;
+          } else if (age >= 24 * 3600_000 && (await this.remindOnce(o, ['stalled-24h', 'stalled-6h']))) {
+            this.events.emit({ type: 'order.stalled', order: o, hours: 24 });
+            res.reminded++;
+          } else if (age >= 6 * 3600_000 && (await this.remindOnce(o, ['stalled-6h']))) {
+            this.events.emit({ type: 'order.stalled', order: o, hours: 6 });
+            res.reminded++;
+          }
+        } else if (o.status === 'RIDER_ASSIGNED' || o.status === 'LAST_MILE_ASSIGNED') {
+          if (age >= NO_SHOW_MS) {
+            if (await this.releaseNoShow(o, now)) res.released++;
+          }
+        } else if (o.status === 'AT_AGENCY' && age >= 24 * 3600_000 && (await this.remindOnce(o, ['agency-24h']))) {
+          this.events.emit({ type: 'order.stalled', order: o, hours: 24 });
+          res.reminded++;
+        } else if (o.status === 'IN_TRANSIT' && age >= STALL_TRANSIT_MS && (await this.remindOnce(o, ['transit-6h']))) {
+          this.events.emit({ type: 'order.stalled', order: o, hours: 6 });
+          res.reminded++;
+        } else if (o.status === 'OUT_FOR_DELIVERY' && age >= STALL_TRANSIT_MS && (await this.remindOnce(o, ['delivery-6h']))) {
+          this.events.emit({ type: 'order.stalled', order: o, hours: 6 });
+          res.reminded++;
+        } else if (o.status === 'AT_DESTINATION_HUB' && age >= STALL_HUB_MS && (await this.remindOnce(o, ['hub-24h']))) {
+          this.events.emit({ type: 'order.stalled', order: o, hours: 24 });
+          res.reminded++;
+        } else if (o.status === 'DISPUTED' && o.dispute?.returnRequired && !o.dispute.returnReceivedAt && age >= STALL_RETURN_MS && (await this.remindOnce(o, ['return-48h']))) {
+          this.events.emit({ type: 'order.stalled', order: o, hours: 48 });
+          res.reminded++;
+        }
+      } catch (e) {
+        console.warn(`[timeouts] ${o.trackingCode}:`, (e as Error).message);
+      }
+    }
+    return res;
+  }
+
+  /** When the order first became a paid job waiting for a rider (the 48 h refund clock starts here). */
+  private refundAnchor(o: Order): number {
+    const at = o.paymentMode === 'ESCROW' ? o.payment.confirmedAt ?? o.createdAt : o.createdAt;
+    return Date.parse(at);
+  }
+
+  /** Returns false when the fresh row no longer qualifies (someone else moved it first). */
+  private async autoRefundUnpicked(orderId: string, now: number): Promise<boolean> {
+    let order: Order;
+    try {
+      ({ order } = await this.mutate(orderId, async (o, repo) => {
+        if (o.status !== 'AWAITING_RIDER') throw conflict('moved on');
+        if (now - this.refundAnchor(o) < NO_RIDER_REFUND_MS) throw conflict('not old enough');
+        if (o.paymentMode === 'COD') {
+          transition(o, 'CANCELLED', 'no rider within 48 h');
+        } else {
+          await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total }]);
+          transition(o, 'REFUNDED', 'no rider within 48 h, full refund');
+        }
+      }));
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'CONFLICT') return false;
+      throw e;
+    }
+    this.events.emit({ type: 'order.status', order });
+    if (order.payouts.length) await this.processPayouts(order.id);
+    return true;
+  }
+
+  private async releaseNoShow(snapshot: Order, now: number): Promise<boolean> {
+    let rider: Rider | undefined;
+    const snapRiderId = snapshot.status === 'RIDER_ASSIGNED' ? snapshot.firstMileRiderId : snapshot.lastMileRiderId;
+    let done: { order: Order; leg: 'FIRST' | 'LAST' };
+    try {
+      const { order, result: leg } = await this.mutate(snapshot.id, async (o, repo) => {
+        // Re-check on the fresh row: same status, same rider, still past the deadline.
+        if (o.status !== snapshot.status) throw conflict('moved on');
+        const first = o.status === 'RIDER_ASSIGNED';
+        const riderId = first ? o.firstMileRiderId : o.lastMileRiderId;
+        if (!riderId || riderId !== snapRiderId) throw conflict('rider changed');
+        if (now - this.statusSince(o) < NO_SHOW_MS) throw conflict('not old enough');
+        if (first) {
+          await this.releaseCodReserve(o, repo);
+          o.firstMileRiderId = undefined;
+          if (o.preferredRiderId === riderId) o.preferredRiderId = undefined; // open the job to everyone
+          this.resetStallReminders(o);
+          transition(o, 'AWAITING_RIDER', 'rider did not pick up within 45 min');
+        } else {
+          o.lastMileRiderId = undefined;
+          transition(o, 'AT_DESTINATION_HUB', 'rider did not pick up within 45 min');
+        }
+        const r = await repo.getRider(riderId);
+        if (r) {
+          r.noShows = (r.noShows ?? 0) + 1;
+          r.updatedAt = new Date().toISOString();
+          rider = await repo.updateRider(r);
+        }
+        return first ? ('FIRST' as const) : ('LAST' as const);
+      });
+      done = { order, leg };
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'CONFLICT') return false;
+      throw e;
+    }
+    if (rider) this.events.emit({ type: 'rider.no_show', order: done.order, rider });
+    this.events.emit({ type: 'order.status', order: done.order });
+    await this.offerToRiders(done.order, done.leg);
+    return true;
+  }
+
+  /** Background check of payment attempts started in the last 30 minutes (webhooks can get lost). */
+  async syncPendingPayments(now = Date.now()): Promise<number> {
+    let n = 0;
+    for (const o of await this.listAllOldestFirst(['PENDING_PAYMENT'], { withPaymentReference: true })) {
+      if (!o.payment.reference || !o.payment.initiatedAt) continue;
+      if (now - Date.parse(o.payment.initiatedAt) > 30 * 60_000) continue;
+      if (now - Date.parse(o.payment.lastCheckedAt ?? '0') < 60_000) continue;
+      await this.syncPayment(o).catch((e) => console.warn('[payment] sync failed:', e.message));
+      n++;
+    }
+    return n;
+  }
+
+  // ------------------------------------------------------------------ buyer actions
+
+  /** Fallback when the rider can't enter the code (dead phone, no data): the buyer confirms receipt. */
+  async buyerConfirmReceived(orderId: string, buyerToken: string | undefined, sessionToken?: string): Promise<BuyerView> {
+    const cur = await this.requireBuyer(orderId, buyerToken);
+    if (cur.paymentMode === 'COD') {
+      throw new AppError('COD_CONFIRM_BY_RIDER', 'Pour une commande en cash, c’est le livreur qui confirme avec le code, après avoir reçu l’argent.', 403);
+    }
+    if (!this.secrets.verifyToken(sessionToken, cur.buyerSessionHash)) {
+      throw forbidden('Seul le téléphone qui a payé peut confirmer la réception.');
+    }
+    const { order } = await this.mutate(orderId, async (o, repo) => {
+      if (o.status !== deliverableStatus(o)) throw conflict('Le colis n’est pas encore en cours de livraison.');
+      const left = BUYER_CONFIRM_MIN_MS - (Date.now() - this.pickupTime(o));
+      if (left > 0) {
+        const min = Math.ceil(left / 60_000);
+        throw new AppError('TOO_EARLY', `Trop tôt : le colis a été récupéré il y a moins de 20 min. Réessayez dans ${min} min.`, 409);
+      }
+      await this.settle(o, repo, 'buyer confirmed receipt');
+    });
+    this.events.emit({ type: 'order.buyer_confirmed', order });
+    this.events.emit({ type: 'order.status', order });
+    await this.processPayouts(order.id);
+    return this.view((await this.store.getOrder(orderId))!, sessionToken);
+  }
+
+  /** When the delivering rider picked the parcel up for the buyer (first IN_TRANSIT / OUT_FOR_DELIVERY entry). */
+  private pickupTime(o: Order): number {
+    const status: OrderStatus = o.type === 'INTER_CITY' ? 'OUT_FOR_DELIVERY' : 'IN_TRANSIT';
+    const h = o.history.find((x) => x.status === status);
+    return h ? Date.parse(h.at) : Date.now();
+  }
+
+  /** The buyer heard from the agency that the bus arrived. */
+  async buyerConfirmArrival(orderId: string, buyerToken: string | undefined, sessionToken?: string): Promise<BuyerView> {
+    const cur = await this.requireBuyer(orderId, buyerToken);
+    this.requirePayerDevice(cur, sessionToken);
+    const { order } = await this.mutate(orderId, (o) => {
+      if (o.status !== 'AT_AGENCY') throw conflict('Le colis n’attend pas à l’agence de départ.');
+      transition(o, 'AT_DESTINATION_HUB', `arrival confirmed by the buyer in ${o.destinationCity}`);
+    });
+    this.events.emit({ type: 'order.status', order });
+    await this.offerToRiders(order, 'LAST');
+    return this.view(order, sessionToken);
+  }
+
+  /** Photos attached by the buyer to a dispute (max 5, 2.5 MB each). */
+  async buyerAddEvidence(orderId: string, buyerToken: string | undefined, mime: string, data: Buffer, sessionToken?: string): Promise<void> {
+    const cur = await this.requireBuyer(orderId, buyerToken);
+    this.requirePayerDevice(cur, sessionToken);
+    if (!/^image\/(jpeg|png|webp)$/i.test(mime.split(';')[0].trim())) throw invalid('Envoyez une photo (JPEG, PNG ou WebP).');
+    if (data.length < 500 || data.length > 2_500_000) throw invalid('La photo doit faire moins de 2,5 Mo.');
+    // Trust the bytes, not the header: the stored type is what the admin's browser will be told.
+    const sniffed = sniffImageMime(data);
+    if (!sniffed) throw invalid('Ce fichier n’est pas une photo valide (JPEG, PNG ou WebP).');
+    const mediaId = newId();
+    await this.store.tx(async (repo) => {
+      const o = await repo.getOrder(orderId);
+      if (!o) throw notFound('Order');
+      if (o.status !== 'DISPUTED' || !o.dispute) throw conflict('Ouvrez d’abord un signalement.');
+      if ((o.dispute.evidence?.length ?? 0) >= 5) throw invalid('5 photos maximum.');
+      await repo.putMedia({ id: mediaId, orderId, mime: sniffed, data, createdAt: new Date().toISOString() });
+      o.dispute.evidence = [...(o.dispute.evidence ?? []), mediaId];
+      await repo.updateOrder(o);
+    });
+  }
+
+  // ------------------------------------------------------------------ rider: absences, returns, photos
+
+  private deliveringRiderId(o: Order) {
+    return o.type === 'INTER_CITY' ? o.lastMileRiderId : o.firstMileRiderId;
+  }
+
+  /** Absence claims need a fresh live location close to the drop-off pin (when the order has one). */
+  private assertAtDoor(rider: Rider, o: Order) {
+    if (!o.dropoffLocation) return; // nothing to compare with: the position is still recorded on the absence
+    const fresh = !!rider.location && !!rider.locationUpdatedAt && Date.now() - Date.parse(rider.locationUpdatedAt) <= ABSENCE_LOCATION_MAX_AGE_MS;
+    if (!fresh) throw new AppError('LOCATION_STALE', 'Partagez votre position en direct (Telegram) pour signaler une absence.', 409);
+    const km = haversineKm(rider.location!, o.dropoffLocation);
+    if (km > ABSENCE_MAX_DISTANCE_KM) {
+      throw new AppError('TOO_FAR', `Vous êtes à ${Math.round(km * 1000)} m de l’adresse de livraison : rapprochez-vous pour signaler l’absence.`, 409);
+    }
+  }
+
+  /** Rider is at the door and nobody answers: the buyer is told and gets 15 minutes. */
+  async riderReportBuyerAbsent(riderTelegramId: number, orderId: string): Promise<Order> {
+    const rider = await this.riders.requireApproved(riderTelegramId);
+    const { order } = await this.mutate(orderId, (o) => {
+      if (this.deliveringRiderId(o) !== rider.id) throw forbidden('You are not the delivering rider for this order.');
+      if (o.status !== deliverableStatus(o)) throw conflict('This order is not out for delivery.');
+      if (o.absence?.side !== 'BUYER') this.assertAtDoor(rider, o);
+      if (o.absence?.side === 'BUYER') return;
+      o.absence = { side: 'BUYER', riderId: rider.id, at: new Date().toISOString(), location: rider.location };
+    });
+    this.events.emit({ type: 'order.absence', order, side: 'BUYER' });
+    return order;
+  }
+
+  /** After waiting (absent) or a refusal at the door, the parcel goes back to the seller. */
+  async riderReturnParcel(riderTelegramId: number, orderId: string, reason: 'ABSENT' | 'REFUSED'): Promise<Order> {
+    const rider = await this.riders.requireApproved(riderTelegramId);
+    const o = await this.store.getOrder(orderId);
+    if (!o || this.deliveringRiderId(o) !== rider.id) throw notFound('Order');
+    if (o.status !== deliverableStatus(o)) throw conflict('This order is not out for delivery.');
+    this.assertAtDoor(rider, o); // a refusal also happens at the door
+    if (reason === 'ABSENT') {
+      const waited = o.absence?.side === 'BUYER' ? Date.now() - Date.parse(o.absence.at) : 0;
+      if (waited < BUYER_WAIT_MS) {
+        const left = Math.ceil((BUYER_WAIT_MS - waited) / 60_000);
+        throw new AppError('KEEP_WAITING', o.absence ? `Attendez encore ${left} min : le client a été prévenu.` : 'Signalez d’abord « Client absent » pour lancer les 15 minutes d’attente.', 409);
+      }
+    }
+    return this.openDispute(
+      orderId,
+      'RIDER',
+      reason === 'ABSENT' ? 'Client absent après 15 min d’attente : retour au vendeur' : 'Le client a refusé le colis : retour au vendeur',
+      reason === 'ABSENT' ? 'BUYER_ABSENT' : 'BUYER_REFUSED'
+    );
+  }
+
+  /** Rider reached the shop and the seller isn't there: the job goes back to the pool, no penalty for the rider. */
+  async riderReportSellerAbsent(riderTelegramId: number, orderId: string): Promise<Order> {
+    const rider = await this.riders.requireApproved(riderTelegramId);
+    const { order } = await this.mutate(orderId, async (o, repo) => {
+      if (o.status !== 'RIDER_ASSIGNED' || o.firstMileRiderId !== rider.id) throw conflict('Nothing to pick up for you on this order.');
+      await this.releaseCodReserve(o, repo);
+      o.firstMileRiderId = undefined;
+      o.absence = { side: 'SELLER', riderId: rider.id, at: new Date().toISOString(), location: rider.location };
+      this.resetStallReminders(o);
+      transition(o, 'AWAITING_RIDER', 'seller absent at pickup');
+      const m = await repo.getUser(o.merchantId);
+      if (m) {
+        m.absentAtPickup = (m.absentAtPickup ?? 0) + 1;
+        m.updatedAt = new Date().toISOString();
+        await repo.updateUser(m);
+      }
+    });
+    this.events.emit({ type: 'order.absence', order, side: 'SELLER' });
+    this.events.emit({ type: 'order.status', order });
+    await this.offerToRiders(order, 'FIRST');
+    return order;
+  }
+
+  /** Optional handover photo, taken by the rider right after delivery. */
+  async setDeliveryPhoto(riderTelegramId: number, orderId: string, fileId: string): Promise<Order> {
+    const rider = await this.riders.requireApproved(riderTelegramId);
+    const { order } = await this.mutate(orderId, (o) => {
+      if (this.deliveringRiderId(o) !== rider.id) throw forbidden('You are not the delivering rider for this order.');
+      if (o.status !== 'DELIVERED' && o.status !== 'SETTLED') throw conflict('Delivery is not confirmed yet.');
+      o.deliveryPhotoFileId = fileId;
+    });
+    return order;
+  }
+
+  /** Rider's earnings: payouts received, still pending, and cash kept on cash-on-delivery jobs. */
+  async riderEarnings(riderTelegramId: number) {
+    const rider = await this.riders.requireApproved(riderTelegramId);
+    const list = await this.store.listOrders({ riderId: rider.id, limit: 500 });
+    const now = Date.now();
+    const sum = { week: 0, month: 0, total: 0, pending: 0, cashKept: 0, deliveries: rider.completedDeliveries };
+    for (const o of list) {
+      for (const p of o.payouts) {
+        const mine = (p.kind === 'FIRST_MILE_RIDER' && o.firstMileRiderId === rider.id) || (p.kind === 'LAST_MILE_RIDER' && o.lastMileRiderId === rider.id);
+        if (!mine) continue;
+        if (p.status === 'SENT') {
+          sum.total += p.amount;
+          const age = now - Date.parse(p.sentAt ?? o.updatedAt);
+          if (age < 7 * 86_400_000) sum.week += p.amount;
+          if (age < 30 * 86_400_000) sum.month += p.amount;
+        } else {
+          sum.pending += p.amount;
+        }
+      }
+      if (o.paymentMode === 'COD' && o.codRiderId === rider.id && (o.status === 'DELIVERED' || o.status === 'SETTLED')) sum.cashKept += o.deliveryFee;
+    }
+    return sum;
+  }
+
+  // ------------------------------------------------------------------ seller actions
+
+  /** The parcel is back with the seller after a return: buyer refunded automatically. */
+  async sellerConfirmReturn(orderId: string, merchantId: string): Promise<Order> {
+    const o = await this.store.getOrder(orderId);
+    if (!o || o.merchantId !== merchantId) throw notFound('Order');
+    if (o.status !== 'DISPUTED' || !o.dispute?.returnRequired) throw conflict('Aucun retour en attente pour cette commande.');
+    // Atomic with the refund. If a previous attempt recorded the return but the refund failed (order
+    // still DISPUTED), calling this again simply retries the resolution.
+    return this.resolveDispute(orderId, 'REFUND_BUYER', 'parcel back with the seller', { by: 'system', markReturnReceived: true });
+  }
+
+  /** New buyer link (the old one stops working), while nothing has been paid or picked up. */
+  async rotateBuyerLink(orderId: string, merchantId: string): Promise<{ order: Order; checkoutUrl: string }> {
+    const token = Secrets.token();
+    const { order } = await this.mutate(orderId, (o) => {
+      if (o.merchantId !== merchantId) throw forbidden();
+      if (!CANCELLABLE.includes(o.status)) throw conflict('Le colis est déjà en route : le lien ne peut plus être changé.');
+      if (o.payment.confirmedAt) throw conflict('Le client a déjà payé avec ce lien.');
+      o.buyerTokenHash = this.secrets.hashToken(token);
+      o.followTokenHash = undefined;
+      o.updatedAt = new Date().toISOString();
+    });
+    return { order, checkoutUrl: this.checkoutUrl(order, token) };
+  }
+
+  /** Fix price, delivery fee, title or buyer number before anyone has paid or a rider accepted. */
+  async editBeforePayment(orderId: string, merchant: User, patch: { itemTitle?: string; itemPrice?: number; deliveryFee?: number; buyerPhone?: string }): Promise<Order> {
+    const { order } = await this.mutate(orderId, (o) => {
+      if (o.merchantId !== merchant.id) throw forbidden();
+      const editable = (o.paymentMode === 'ESCROW' && o.status === 'PENDING_PAYMENT' && !o.payment.reference) || (o.paymentMode === 'COD' && o.status === 'AWAITING_RIDER');
+      if (!editable) throw conflict('La commande ne peut plus être modifiée (paiement en cours, payée, ou livreur déjà en route).');
+      if (patch.itemTitle !== undefined) o.itemTitle = text(patch.itemTitle, 'Item title', 2, 120);
+      if (patch.buyerPhone !== undefined) {
+        const p = normalizeContactPhone(patch.buyerPhone);
+        if (p === merchant.phone) throw invalid('The buyer phone must be different from your own.');
+        o.buyerPhone = p;
+      }
+      const pricing = computePricing(patch.itemPrice ?? o.itemPrice, patch.deliveryFee ?? o.deliveryFee, o.agencyFee, this.settings.commissionPct);
+      Object.assign(o, pricing);
+      o.updatedAt = new Date().toISOString();
+      o.history.push({ status: o.status, at: o.updatedAt, note: 'edited by seller' });
+    });
+    return order;
+  }
+
+  /** Seller's answer to a rider's claim that the agency charged more than declared. */
+  async sellerDecideAgencyFee(orderId: string, merchantId: string, approve: boolean): Promise<Order> {
+    const { order } = await this.mutate(orderId, (o) => {
+      if (o.merchantId !== merchantId) throw forbidden();
+      if (o.agencyFeeClaim?.status !== 'PENDING') throw conflict('Pas de demande en attente.');
+      o.agencyFeeClaim = { ...o.agencyFeeClaim, status: approve ? 'APPROVED' : 'REJECTED' };
+    });
+    this.events.emit({ type: 'order.agency_fee_claim', order });
+    return order;
+  }
+
+  // ------------------------------------------------------------------ admin tools
+
+  /** Unfreeze an order and continue where it stopped (e.g. a code typo lock-out, a false report). */
+  async adminResume(orderId: string, note?: string): Promise<Order> {
+    const { order } = await this.mutate(orderId, (o) => {
+      if (o.status !== 'DISPUTED' || !o.dispute) throw conflict('Order is not disputed.');
+      const target = o.dispute.fromStatus;
+      if (!canTransition('DISPUTED', target)) throw conflict(`Cannot resume to ${target}.`);
+      o.codeAttempts = 0;
+      o.absence = undefined;
+      o.buyerRefusalAt = undefined; // a false refusal/absence report must not push the buyer to prepaid-only
+      o.dispute.resolution = 'RESUMED';
+      o.dispute.resolutionNote = optText(note, 'Note', 500);
+      o.dispute.resolvedAt = new Date().toISOString();
+      transition(o, target, 'resumed by admin');
+    });
+    this.events.emit({ type: 'order.status', order });
+    return order;
+  }
+
+  /** Remove the rider (back to the pool), or hand the job to a specific rider (e.g. after an accident). */
+  async adminReassign(orderId: string, riderCode: string | null): Promise<Order> {
+    if (!riderCode) {
+      const { order, result: leg } = await this.mutate(orderId, async (o, repo) => {
+        if (o.status === 'RIDER_ASSIGNED') {
+          await this.releaseCodReserve(o, repo);
+          if (o.preferredRiderId === o.firstMileRiderId) o.preferredRiderId = undefined; // open the job to everyone
+          o.firstMileRiderId = undefined;
+          this.resetStallReminders(o);
+          transition(o, 'AWAITING_RIDER', 'rider removed by admin');
+          return 'FIRST' as const;
+        }
+        if (o.status === 'LAST_MILE_ASSIGNED') {
+          o.lastMileRiderId = undefined;
+          transition(o, 'AT_DESTINATION_HUB', 'rider removed by admin');
+          return 'LAST' as const;
+        }
+        throw conflict('The parcel is already picked up: name the rider who takes over.');
+      });
+      this.events.emit({ type: 'order.status', order });
+      await this.offerToRiders(order, leg);
+      return order;
+    }
+    const rider = await this.requireBookableRider(riderCode);
+    const { order } = await this.mutate(orderId, async (o, repo) => {
+      const firstLeg = o.status === 'RIDER_ASSIGNED' || o.status === 'IN_TRANSIT';
+      const lastLeg = o.status === 'LAST_MILE_ASSIGNED' || o.status === 'OUT_FOR_DELIVERY';
+      if (!firstLeg && !lastLeg) throw conflict('No rider to replace at this step.');
+      // Same rule as `claim`: one rider can't run both legs of an inter-city order.
+      if (firstLeg && o.lastMileRiderId === rider.id) throw invalid('This rider already runs the last leg of this order.');
+      if (lastLeg && o.firstMileRiderId === rider.id) throw invalid('This rider already ran the first leg of this order.');
+      if (firstLeg) {
+        // Once the parcel is picked up it is physically with the old rider, so their COD reservation
+        // stays put (it backs the cash/parcel they hold); only before pickup does the reserve move.
+        if (o.paymentMode === 'COD' && o.status === 'RIDER_ASSIGNED') {
+          await this.releaseCodReserve(o, repo);
+          const r = await repo.getRider(rider.id);
+          if (!r || r.floatBalance - r.floatReserved < o.itemPrice) throw new AppError('INSUFFICIENT_FLOAT', 'Ce livreur n’a pas assez de caution pour une course cash.', 409);
+          r.floatReserved += o.itemPrice;
+          r.updatedAt = new Date().toISOString();
+          await repo.updateRider(r);
+          o.codRiderId = r.id;
+          o.codReserved = o.itemPrice;
+        }
+        o.firstMileRiderId = rider.id;
+      } else {
+        o.lastMileRiderId = rider.id;
+      }
+      const pickedUp = o.status === 'IN_TRANSIT' || o.status === 'OUT_FOR_DELIVERY';
+      o.history.push({
+        status: o.status,
+        at: new Date().toISOString(),
+        note: `rider replaced by admin: ${rider.riderCode}${pickedUp && o.paymentMode === 'COD' ? ' (after pickup: COD reserve stays with the previous rider)' : ''}`
+      });
+    });
+    this.events.emit({ type: 'order.reassigned', order, rider });
+    return order;
+  }
+
+  /** After checking identity by phone, send the release code to the buyer's linked Telegram. */
+  async adminResendCode(orderId: string): Promise<Order> {
+    const o = await this.store.getOrder(orderId);
+    if (!o) throw notFound('Order');
+    if (!o.buyerTelegramId) throw invalid('Le client ne suit pas cette commande sur Telegram : demandez-lui d’appuyer sur « Suivre sur Telegram ».');
+    if (TERMINAL_STATUSES.includes(o.status) || o.status === 'DELIVERED') throw conflict('La commande est terminée.');
+    this.events.emit({ type: 'order.code_resent', order: o, code: this.secrets.decrypt(o.releaseCodeEnc) });
+    return o;
   }
 
   // ------------------------------------------------------------------ payouts
@@ -1048,7 +1851,9 @@ export class OrderService {
         await this.finishPayout(orderId, payoutId, tx.status === 'SUCCESSFUL', tx.reference, 'provider reported failure');
       }
     } catch (e) {
-      await this.finishPayout(orderId, payoutId, false, undefined, (e as Error).message);
+      // Timeout / network / HTTP error: the provider may or may not have sent the money. The gateway
+      // can't look a payout up by our reference, so never auto-retry (that could pay twice): a human checks.
+      await this.flagPayout(orderId, payoutId, `Ambiguous provider error, check the provider dashboard before retrying: ${(e as Error).message}`.slice(0, 300));
     }
   }
 
@@ -1075,9 +1880,11 @@ export class OrderService {
       }
       x.lastError = error.slice(0, 300);
       x.status = x.attempts >= MAX_PAYOUT_ATTEMPTS ? 'NEEDS_REVIEW' : 'FAILED';
-      return x.status === 'NEEDS_REVIEW' ? { ...x } : undefined;
+      return { ...x };
     });
-    if (flagged) this.events.emit({ type: 'payout.attention', order, payout: flagged });
+    if (!flagged) return;
+    if (flagged.status === 'NEEDS_REVIEW') this.events.emit({ type: 'payout.attention', order, payout: flagged });
+    if (flagged.attempts === 1 && flagged.kind !== 'BUYER_REFUND') this.events.emit({ type: 'payout.delayed', order, payout: flagged });
   }
 
   private async flagPayout(orderId: string, payoutId: string, reason: string) {
@@ -1097,6 +1904,7 @@ export class OrderService {
       if (!x) throw notFound('Payout');
       if (x.status !== 'NEEDS_REVIEW' && x.status !== 'FAILED') throw conflict(`Payout is ${x.status}`);
       if (action === 'RETRY') {
+        if (!x.phone) throw invalid('This payout has no destination number: pay it by hand, then mark it as sent.');
         x.status = 'PENDING';
         x.attempts = 0;
         return;

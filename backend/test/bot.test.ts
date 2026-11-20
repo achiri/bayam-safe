@@ -6,7 +6,7 @@ import { createServer } from '../src/api/server.js';
 import { assertGeoPoint } from '../src/domain/geo.js';
 import { createBot } from '../src/bot/bot.js';
 import { telegramWebhook } from '../src/bot/webhook.js';
-import { makeApp, makeRider, releaseCode, tick } from './helpers.js';
+import { makeApp, makeMerchant, makeRider, releaseCode, tick, intraInput, TestApp } from './helpers.js';
 
 const botInfo = {
   id: 1, is_bot: true, first_name: 'BayamSafe', username: 'bayamsafe_test_bot',
@@ -16,8 +16,8 @@ const botInfo = {
 
 const ADMIN_TG = 42;
 
-function harness() {
-  const app = makeApp({ env: { ADMIN_TELEGRAM_IDS: String(ADMIN_TG) } });
+function harness(existing?: TestApp) {
+  const app = existing ?? makeApp({ env: { ADMIN_TELEGRAM_IDS: String(ADMIN_TG) } });
   const bot = createBot(app, 'test-token', { botInfo });
   const sent: Array<{ method: string; payload: any }> = [];
   bot.api.config.use(async (_prev, method, payload) => {
@@ -218,6 +218,7 @@ describe('telegram bot', () => {
     assert.ok(h.to(rider.telegramId).some((s) => s.payload.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data === `r:claim:${order.id}`));
     await h.press(rider.telegramId, `r:claim:${order.id}`);
     await h.press(rider.telegramId, `r:pickup:${order.id}`);
+    await h.photo(rider.telegramId, 'parcel-photo-0001');
     await h.press(rider.telegramId, `r:deliver:${order.id}`);
     await h.text(rider.telegramId, releaseCode(h.app, order));
     assert.equal((await h.app.store.getOrder(order.id))!.status, 'SETTLED');
@@ -285,5 +286,129 @@ describe('telegram bot', () => {
     await h.press(b.telegramId, `r:claim:${order.id}`);
     const alert = [...h.sent].reverse().find((s) => s.method === 'answerCallbackQuery' && s.payload.show_alert);
     assert.match(alert!.payload.text, /déjà prise/);
+  });
+
+  async function codOrderWithRider(h: ReturnType<typeof harness>) {
+    const merchant = await makeMerchant(h.app, { kycStatus: 'VERIFIED' });
+    const rider = await makeRider(h.app, { floatBalance: 10000 });
+    const { order } = await h.app.orders.createOrder(merchant, intraInput({ paymentMode: 'COD', itemPrice: 5000, deliveryFee: 500 }));
+    await h.press(rider.telegramId, `r:claim:${order.id}`);
+    return { merchant, rider, order };
+  }
+
+  it('keeps the wizard session across a new bot instance on the same store', async () => {
+    const h1 = harness();
+    const merchant = await makeMerchant(h1.app, { kycStatus: 'VERIFIED' });
+    await h1.press(merchant.telegramId, 'menu:new_intra');
+    await h1.text(merchant.telegramId, 'Sac en cuir');
+    assert.ok(await h1.app.store.getBotSession(`tg:${merchant.telegramId}`));
+
+    const h2 = harness(h1.app); // "restart": fresh bot, same store
+    await h2.text(merchant.telegramId, '15 000');
+    assert.match(h2.lastText(), /livraison/i);
+    await h2.text(merchant.telegramId, '1000');
+    assert.match(h2.lastText(), /num/i); // asks for the buyer number: the flow carried on
+  });
+
+  it('buyer absent: 15 min wait, then the parcel goes back and the seller confirms the return', async () => {
+    const h = harness();
+    const { merchant, rider, order } = await codOrderWithRider(h);
+    await h.press(rider.telegramId, `r:pickup:${order.id}`);
+    await h.photo(rider.telegramId, 'parcel-photo-0002');
+    assert.equal((await h.app.store.getOrder(order.id))!.status, 'IN_TRANSIT');
+    assert.ok(h.to(rider.telegramId).some((s) => /position en direct/.test(s.payload.text ?? '')));
+
+    await h.press(rider.telegramId, `r:absent:${order.id}`);
+    await tick();
+    assert.ok(h.to(merchant.telegramId).some((s) => /personne ne répond/.test(s.payload.text ?? '')));
+    await h.press(rider.telegramId, `r:retabs:${order.id}`);
+    assert.match(h.lastText(), /Attendez encore/);
+
+    const o = (await h.app.store.getOrder(order.id))!;
+    await h.app.store.updateOrder({ ...o, absence: { ...o.absence!, at: new Date(Date.now() - 16 * 60_000).toISOString() } });
+    await h.press(rider.telegramId, `r:retabs:${order.id}`);
+    const disputed = (await h.app.store.getOrder(order.id))!;
+    assert.equal(disputed.status, 'DISPUTED');
+    assert.equal(disputed.dispute!.returnRequired, true);
+    await tick();
+    const ask = h.to(merchant.telegramId).find((s) => s.payload.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data === `m:retok:${order.id}`);
+    assert.ok(ask);
+
+    await h.press(merchant.telegramId, `m:retok:${order.id}`);
+    assert.ok((await h.app.store.getOrder(order.id))!.dispute!.returnReceivedAt);
+    assert.match(h.lastText(), /retour confirmé/);
+  });
+
+  it('pickup needs a photo; the handover photo is optional after the code', async () => {
+    const h = harness();
+    const { rider, order } = await codOrderWithRider(h);
+    await h.press(rider.telegramId, `r:pickup:${order.id}`);
+    assert.match(h.lastText(), /photo du colis/);
+    await h.text(rider.telegramId, 'ok je suis là');
+    assert.match(h.lastText(), /photo du colis/);
+    assert.equal((await h.app.store.getOrder(order.id))!.status, 'RIDER_ASSIGNED');
+    await h.photo(rider.telegramId, 'parcel-photo-0003');
+    const picked = (await h.app.store.getOrder(order.id))!;
+    assert.equal(picked.status, 'IN_TRANSIT');
+    assert.equal(picked.pickupPhotoFileId, 'parcel-photo-0003');
+
+    await h.press(rider.telegramId, `r:deliver:${order.id}`);
+    await h.text(rider.telegramId, releaseCode(h.app, picked));
+    assert.match(h.lastText(), /photo de la remise/);
+    await h.photo(rider.telegramId, 'handover-0001');
+    assert.equal((await h.app.store.getOrder(order.id))!.deliveryPhotoFileId, 'handover-0001');
+  });
+
+  it('/payout asks the admin, /earnings shows FCFA amounts', async () => {
+    const h = harness();
+    const merchant = await makeMerchant(h.app, { kycStatus: 'VERIFIED' });
+    await h.text(merchant.telegramId, '/payout');
+    assert.match(h.lastText(), /Utilisation/);
+    await h.text(merchant.telegramId, '/payout 699001122');
+    assert.match(h.lastText(), /Demande envoyée à l’admin/);
+    assert.ok((await h.app.store.getUser(merchant.id))!.pendingPayoutPhone);
+    await tick();
+    assert.ok(h.to(ADMIN_TG).some((s) => /Payout number change/.test(s.payload.text ?? '')));
+
+    const rider = await makeRider(h.app);
+    await h.text(rider.telegramId, '/earnings');
+    assert.match(h.lastText(), /Vos gains[\s\S]*FCFA/);
+    await h.text(rider.telegramId, '/gains');
+    assert.match(h.lastText(), /Cette semaine/);
+  });
+
+  it('cash on delivery is refused in the wizard for a prepaid-only buyer', async () => {
+    const h = harness();
+    const merchant = await makeMerchant(h.app, { kycStatus: 'VERIFIED' });
+    for (const n of [1, 2]) {
+      const { order } = await h.app.orders.createOrder(merchant, intraInput({ buyerPhone: '699555000', itemTitle: `Vieux ${n}` }));
+      await h.app.store.updateOrder({ ...order, buyerRefusalAt: new Date().toISOString() });
+    }
+    const M = merchant.telegramId;
+    await h.press(M, 'menu:new_intra');
+    await h.text(M, 'Montre');
+    await h.text(M, '9000');
+    await h.text(M, '1000');
+    await h.text(M, '699 55 50 00');
+    await h.text(M, 'Bonapriso');
+    await h.press(M, 'ord:mode:COD');
+    assert.match(h.lastText(), /2 livraisons en cash/);
+    await h.press(M, 'ord:mode:ESCROW');
+    assert.doesNotMatch(h.lastText(), /2 livraisons en cash/);
+  });
+
+  it('a suspended seller is told so, and a reassigned job card reaches the new rider', async () => {
+    const h = harness();
+    const sus = await makeMerchant(h.app, { kycStatus: 'VERIFIED', suspendedAt: new Date().toISOString(), suspendNote: 'fraude' });
+    await h.press(sus.telegramId, 'menu:new_intra');
+    assert.match(h.lastText(), /suspendu.*fraude/);
+
+    const { order } = await codOrderWithRider(h);
+    const next = await makeRider(h.app, { floatBalance: 10000 });
+    await h.app.orders.adminReassign(order.id, next.riderCode);
+    await tick();
+    const card = h.to(next.telegramId).find((s) => /Course/.test(s.payload.text ?? ''));
+    assert.ok(card);
+    assert.equal(card!.payload.reply_markup.inline_keyboard[0][0].callback_data, `r:pickup:${order.id}`);
   });
 });

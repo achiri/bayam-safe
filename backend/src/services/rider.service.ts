@@ -175,10 +175,12 @@ export class RiderService {
     return { topup, ussdCode: res.ussdCode };
   }
 
-  /** Applies a provider transaction to a pending top-up (idempotent). */
+  /** Applies a provider transaction to a pending top-up or withdrawal (idempotent). */
   async applyTopupTransaction(tx: Transaction): Promise<void> {
     const topup = await this.store.getTopupByRef(tx.reference);
-    if (!topup || topup.status !== 'PENDING') return;
+    if (!topup) return;
+    if (topup.kind === 'WITHDRAWAL') return this.applyWithdrawalTransaction(topup, tx);
+    if (topup.status !== 'PENDING') return;
     if (tx.status === 'FAILED') {
       await this.store.updateTopup({ ...topup, status: 'FAILED', updatedAt: new Date().toISOString() });
       return;
@@ -191,7 +193,7 @@ export class RiderService {
     const now = new Date().toISOString();
     const rider = await this.store.tx(async (repo) => {
       const fresh = await repo.getTopup(topup.id);
-      if (!fresh || fresh.status !== 'PENDING') return undefined;
+      if (!fresh || fresh.status !== 'PENDING' || fresh.kind === 'WITHDRAWAL') return undefined;
       const added = await repo.addJournal({
         key: `topup:${topup.id}`,
         description: `Float top-up ${topup.amount} FCFA`,
@@ -210,6 +212,117 @@ export class RiderService {
       return repo.updateRider(r);
     });
     if (rider) this.events.emit({ type: 'topup.confirmed', rider, topup: { ...topup, status: 'CONFIRMED' } });
+  }
+
+  /** A withdrawal the provider answered later (webhook / poll): paid out, or sent back to the float. */
+  private async applyWithdrawalTransaction(topup: FloatTopup, tx: Transaction): Promise<void> {
+    if (topup.status !== 'PENDING' && topup.status !== 'SENDING') return;
+    if (tx.status === 'FAILED') {
+      await this.reverseWithdrawal(topup.id);
+      return;
+    }
+    if (tx.status !== 'SUCCESSFUL') return;
+    if (tx.amount !== topup.amount) {
+      console.error(`[withdraw] amount mismatch for ${topup.id}: expected ${topup.amount}, got ${tx.amount}`);
+      return;
+    }
+    await this.store.tx(async (repo) => {
+      const fresh = await repo.getTopup(topup.id);
+      if (!fresh || (fresh.status !== 'PENDING' && fresh.status !== 'SENDING')) return;
+      await repo.updateTopup({ ...fresh, status: 'CONFIRMED', updatedAt: new Date().toISOString() });
+    });
+  }
+
+  /** Gives a failed withdrawal's amount back to the float, once (journal key + status guard). */
+  private async reverseWithdrawal(topupId: string): Promise<void> {
+    const later = new Date().toISOString();
+    await this.store.tx(async (repo) => {
+      const t = await repo.getTopup(topupId);
+      if (!t || t.kind !== 'WITHDRAWAL' || (t.status !== 'PENDING' && t.status !== 'SENDING')) return;
+      const r = await repo.getRider(t.riderId);
+      if (!r) throw notFound('Rider');
+      const added = await repo.addJournal({
+        key: `float-withdraw-reversal:${topupId}`,
+        description: `Float withdrawal reversed ${t.amount} FCFA`,
+        createdAt: later,
+        lines: [
+          { account: 'GATEWAY_CLEARING', refId: r.id, amount: -t.amount },
+          { account: 'RIDER_FLOAT', refId: r.id, amount: t.amount }
+        ]
+      });
+      if (added) {
+        r.floatBalance += t.amount;
+        r.updatedAt = later;
+        await repo.updateRider(r);
+      }
+      await repo.updateTopup({ ...t, status: 'FAILED', updatedAt: later });
+    });
+  }
+
+  /**
+   * Sends the rider's unlocked float (not reserved against COD parcels) back to their mobile money.
+   * The float is debited and the withdrawal saved as SENDING before the provider is called. Only an
+   * explicit provider FAILED gives the money back; a thrown error (timeout, network) leaves it debited
+   * and flags the withdrawal for an admin, because the provider may well have paid.
+   */
+  async withdrawFloat(telegramId: number, amount: number): Promise<{ rider: Rider; topup: FloatTopup; message?: string }> {
+    const r0 = await this.requireApproved(telegramId);
+    assertAmount('amount', amount, { min: 500, max: 500_000 });
+    const now = new Date().toISOString();
+    const topupId = newId();
+    const topup: FloatTopup = { id: topupId, kind: 'WITHDRAWAL', riderId: r0.id, amount, phone: r0.phone, status: 'SENDING', createdAt: now, updatedAt: now };
+
+    const rider = await this.store.tx(async (repo) => {
+      const r = await repo.getRider(r0.id);
+      if (!r) throw notFound('Rider');
+      if (amount > r.floatBalance - r.floatReserved) throw invalid('Montant supérieur à votre solde disponible (hors colis en cours).');
+      const added = await repo.addJournal({
+        key: `float-withdraw:${topupId}`,
+        description: `Float withdrawal ${amount} FCFA`,
+        createdAt: now,
+        lines: [
+          { account: 'RIDER_FLOAT', refId: r.id, amount: -amount },
+          { account: 'GATEWAY_CLEARING', refId: r.id, amount }
+        ]
+      });
+      if (!added) throw invalid('Retrait déjà enregistré.');
+      r.floatBalance -= amount;
+      r.updatedAt = now;
+      await repo.insertTopup(topup);
+      return repo.updateRider(r);
+    });
+
+    let tx: Transaction;
+    try {
+      tx = await this.gateway.withdraw({
+        amount,
+        phone: r0.phone,
+        description: 'BayamSafe float withdrawal',
+        externalReference: `float-withdraw:${topupId}`
+      });
+    } catch (err) {
+      // Ambiguous: the money may have left. Keep it debited, put it in front of an admin.
+      console.error(`[float-withdraw] ${topupId} ambiguous provider error:`, err);
+      topup.status = 'NEEDS_REVIEW';
+      topup.updatedAt = new Date().toISOString();
+      await this.store.updateTopup(topup);
+      this.events.emit({ type: 'topup.attention', rider, topup: { ...topup } });
+      return { rider, topup, message: 'Retrait en vérification : votre solde reste débité le temps que nous vérifiions avec l’opérateur. Ne refaites pas la demande.' };
+    }
+
+    if (tx.status === 'FAILED') {
+      await this.reverseWithdrawal(topupId);
+      throw new AppError('WITHDRAW_FAILED', 'Le retrait a échoué, votre solde n’a pas été débité. Réessayez plus tard.', 502);
+    }
+    topup.reference = tx.reference;
+    topup.updatedAt = new Date().toISOString();
+    if (tx.status === 'SUCCESSFUL') {
+      topup.status = 'CONFIRMED';
+    } else {
+      topup.status = 'PENDING'; // the webhook / poll resolves it through applyTopupTransaction
+    }
+    await this.store.updateTopup(topup);
+    return { rider, topup, message: topup.status === 'PENDING' ? 'Retrait en cours de traitement par l’opérateur.' : undefined };
   }
 
   async leaderboard(limit = 5): Promise<Rider[]> {
