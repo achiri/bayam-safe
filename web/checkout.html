@@ -28,6 +28,7 @@
     <section id="absenceBanner" class="hidden bg-amber-100 border-2 border-amber-500 rounded-2xl p-4 space-y-2" aria-labelledby="absenceTitle">
       <h2 id="absenceTitle" class="font-extrabold text-amber-900 text-sm" data-i18n="absenceTitle"></h2>
       <div id="absenceTimer" class="font-mono text-2xl font-black text-amber-900" role="timer"></div>
+      <p id="absenceNoPhone" class="hidden text-sm text-amber-900" data-i18n="absenceNoPhone"></p>
       <a id="absenceCall" class="hidden w-full min-h-[44px] flex items-center justify-center bg-amber-700 text-white font-extrabold text-sm rounded-xl px-3" href="#"></a>
     </section>
     <div id="loading" class="text-center text-sm text-slate-500 py-10" data-i18n="loading"></div>
@@ -171,6 +172,8 @@
       receivedBtn: 'J’ai reçu mon colis', receivedConfirm: 'Confirmer la réception ? Le paiement sera remis au vendeur. Cette action est irréversible.', receivedDone: 'Merci ! Le vendeur est payé.',
       arrivalBtn: 'L’agence m’a appelé, mon colis est arrivé', arrivalHint: 'Dites-le-nous quand l’agence vous a appelé : nous prévenons le livreur local.', arrivalDone: 'Arrivée confirmée.',
       absenceTitle: 'Le livreur est devant chez vous. Vous avez 15 min, appelez-le.', absenceLeft: (t) => `Temps restant : ${t}`, absenceOver: 'Le délai est écoulé : le livreur peut repartir avec le colis.', callRider: (p) => `📞 Appeler le livreur${p ? ' (' + p + ')' : ''}`,
+      absenceTitleNoPhone: 'Le livreur est devant chez vous. Vous avez 15 min : suivez la commande sur Telegram ou attendez son appel.', absenceNoPhone: 'Le numéro du livreur s’affiche uniquement sur le téléphone qui a payé, une fois le colis en route. Utilisez le suivi Telegram ou répondez à son appel.',
+      cancelConfirmFee: (fee, refund) => `Le livreur est déjà en route : ${fee} (la moitié des frais de livraison) lui seront versés, vous serez remboursé de ${refund}. Annuler la commande ?`,
       recipient: (n) => `À remettre à : ${n}`, loadingMap: 'Chargement de la carte…', mapFail: 'La carte est indisponible. Vous pouvez quand même saisir l’adresse.',
       evidenceTitle: 'Ajouter des photos au litige', evidenceHint: 'Jusqu’à 5 photos du colis (état, contenu). Elles sont envoyées au support.', evidenceChoose: 'Choisir des photos',
       evidenceCount: (n) => `${n}/5 photos envoyées`, evidenceType: 'Photo refusée : format non pris en charge (JPEG, PNG ou WebP).', evidenceLimit: 'Limite de 5 photos atteinte.', evidenceThumb: (i) => `Photo ${i} envoyée`,
@@ -208,6 +211,8 @@
       receivedBtn: 'I received my parcel', receivedConfirm: 'Confirm receipt? Payment will be released to the seller. This cannot be undone.', receivedDone: 'Thank you! The seller is being paid.',
       arrivalBtn: 'The agency called me, my parcel has arrived', arrivalHint: 'Tell us once the agency has called you; we alert the local rider.', arrivalDone: 'Arrival confirmed.',
       absenceTitle: 'The rider is at your door. You have 15 min, call them.', absenceLeft: (t) => `Time left: ${t}`, absenceOver: 'Time is up: the rider may leave with the parcel.', callRider: (p) => `📞 Call the rider${p ? ' (' + p + ')' : ''}`,
+      absenceTitleNoPhone: 'The rider is at your door. You have 15 min: follow the order on Telegram or wait for their call.', absenceNoPhone: 'The rider’s number is only shown on the phone that paid, once the parcel is on its way. Use the Telegram tracking or answer their call.',
+      cancelConfirmFee: (fee, refund) => `The rider is already on the way: ${fee} (half of the delivery fee) will be paid to them and you will be refunded ${refund}. Cancel the order?`,
       recipient: (n) => `Hand over to: ${n}`, loadingMap: 'Loading map…', mapFail: 'The map is unavailable. You can still type the address.',
       evidenceTitle: 'Add photos to the dispute', evidenceHint: 'Up to 5 photos of the parcel (condition, contents). They go to support.', evidenceChoose: 'Choose photos',
       evidenceCount: (n) => `${n}/5 photos sent`, evidenceType: 'Photo rejected: unsupported format (JPEG, PNG or WebP).', evidenceLimit: 'Limit of 5 photos reached.', evidenceThumb: (i) => `Photo ${i} sent`,
@@ -510,7 +515,9 @@
   };
 
   $('cancelBtn').onclick = async () => {
-    if (!confirm(T().cancelConfirm)) return;
+    const fee = view && Number(view.cancelFee);
+    const msg = fee > 0 ? T().cancelConfirmFee(money(fee), money(Math.max(0, Number(view.total || 0) - fee))) : T().cancelConfirm;
+    if (!confirm(msg)) return;
     try {
       view = await api(`/api/checkout/${encodeURIComponent(orderId)}/cancel`, { method: 'POST' });
       render();
@@ -564,6 +571,8 @@
     if (!on) return;
     const phone = v.rider && v.rider.phone;
     show('absenceCall', !!phone);
+    show('absenceNoPhone', !phone);
+    $('absenceTitle').textContent = phone ? T().absenceTitle : T().absenceTitleNoPhone;
     if (phone) { $('absenceCall').textContent = T().callRider(phone); $('absenceCall').href = 'tel:' + phone.replace(/\s/g, ''); }
     const end = Date.parse(v.absence.at) + WAIT_MS;
     const tick = () => {

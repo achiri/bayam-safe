@@ -279,8 +279,15 @@ describe('HTTP API', () => {
       assert.ok(pending.body.some((u: any) => u.id === merchant.id && u.pendingPayoutPhone));
       const d = await call('POST', `/api/admin/users/${merchant.id}/payout-phone`, { headers: auth, json: { approve: true } });
       assert.equal(d.status, 200);
-      assert.ok(d.body.payoutPhone);
-      assert.equal(d.body.pendingPayoutPhone, undefined);
+      // approval only schedules the change (24 h cool-down): the old number stays in force
+      assert.equal(d.body.payoutPhone, undefined);
+      assert.ok(d.body.pendingPayoutPhone);
+      assert.ok(d.body.payoutPhoneEffectiveAt);
+      const scheduled = await call('GET', '/api/admin/payout-phones', { headers: auth });
+      assert.equal(scheduled.body.find((u: any) => u.id === merchant.id).scheduled, true);
+      await app.users.activatePayoutPhoneIfDue(merchant.id, new Date(Date.now() + 25 * 3600_000));
+      assert.ok((await app.store.getUser(merchant.id))!.payoutPhone);
+      assert.equal((await app.store.getUser(merchant.id))!.pendingPayoutPhone, undefined);
       assert.equal((await call('POST', `/api/admin/users/${merchant.id}/payout-phone`, { headers: auth, json: {} })).status, 400);
     });
 

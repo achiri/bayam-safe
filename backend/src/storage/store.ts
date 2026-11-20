@@ -1,4 +1,4 @@
-import { AuditEntry, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
+import { AuditEntry, TopupStatus, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
 
 /** Keyset cursor for oldest-first pagination (updated_at, then id). */
 export interface OldestFirstCursor {
@@ -65,6 +65,8 @@ export interface Repo {
   getTopup(id: string): Promise<FloatTopup | undefined>;
   getTopupByRef(ref: string): Promise<FloatTopup | undefined>;
   updateTopup(t: FloatTopup): Promise<void>;
+  /** Top-ups / withdrawals in any of `statuses` (oldest first), optionally of one kind. A missing kind means TOPUP. */
+  listTopups(q: { statuses: TopupStatus[]; kind?: 'TOPUP' | 'WITHDRAWAL'; limit?: number }): Promise<FloatTopup[]>;
 
   putMedia(m: Media): Promise<void>;
   getMedia(id: string): Promise<Media | undefined>;

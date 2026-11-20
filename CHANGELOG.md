@@ -4,6 +4,29 @@ All notable changes to BayamSafe are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Sprint 2: customer decisions and withdrawal safety
+
+The customer made eight more policy decisions on 2026-11-20 (decisions 6 to 13). They are listed here as the team builds them; the matching rules are in `docs/POLICIES.md`.
+
+#### Added
+- **Own-rider failed delivery.** If the seller's own rider reports the buyer absent or refusing, the buyer is refunded in full and the riders' legs are charged to the seller.
+- **Payout number cool-down.** A new payout number becomes active 24 hours after admin approval. The old contact is told on Telegram, and withdrawals are paused for those 24 hours.
+- **Buyer late cancel.** A buyer who cancels after a rider accepted pays the rider half the delivery fee, taken from the refund and shown before confirming. An admin cancel pays the rider nothing.
+- **Cash delivery that fails.** When a cash-on-delivery buyer is absent or refuses, the rider is paid the delivery fee, charged to the seller. The buyer still gets a refusal strike.
+- **Seller debt cap.** A seller who owes more than 10,000 FCFA can only create prepaid orders. Admins can write off debt, and each write-off is logged in the audit journal.
+- **Rider phone privacy.** The rider's phone is shown to the buyer only after pickup, and only on the phone that paid (any device for cash on delivery).
+- **GPS check for absent and refused.** The rider must be within 250 m of the drop-off, with a location under 5 minutes old.
+- **Withdrawal safety.** A payout or withdrawal with an unclear gateway result is never resent automatically; it goes to admin review ("Retraits à vérifier") where the admin presses "Marquer envoyé" or "Annuler et recréditer". A background check re-asks the gateway about pending withdrawals.
+
+#### Changed
+- Buyer cancel after a rider accepted: previously a full refund with the rider unpaid; now the rider gets half the delivery fee from the refund.
+- Cash-on-delivery failed deliveries previously paid the rider nothing; they now pay the delivery fee, charged to the seller.
+
+#### Policy decisions (2026-11-20, second round)
+- Paying-phone risk (a seller grabbing the buyer's paid session) is accepted until SMS exists. The 20-minute delay and alerts on "J'ai reçu mon colis" stay.
+
+### Sprint 1
+
 Sprint 1: every buyer, seller and rider exception now has a defined outcome. Nothing waits forever and no money is stranded. Items marked are being finished by the team this sprint.
 
 ### Added

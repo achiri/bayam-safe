@@ -4,7 +4,7 @@ Task-oriented instructions for sellers, buyers, riders and admins. This guide is
 
 For the exact rules and numbers behind each case, see [POLICIES.md](POLICIES.md).
 
-Features marked **(new this sprint)** arrive with the Sprint 1 release.
+Features marked **(new this sprint)** arrive with the Sprint 1 release. Features marked **(Sprint 2)** are customer decisions being built in Sprint 2; they may not be live yet.
 
 ---
 
@@ -31,6 +31,8 @@ You are paid from your first order. There is no payout hold for new sellers.
 8. Press "Créer la commande", then "Envoyer sur WhatsApp" to share the buyer link.
 
 If you pick cash on delivery for a buyer who refused 2 cash deliveries in the last 90 days, the bot refuses it and asks for a prepaid order.
+
+**(Sprint 2) Debt cap.** If you owe BayamSafe more than 10,000 FCFA (for example from late cancels or returns, recovered from your next payouts), the bot only lets you create prepaid orders and tells you so. Once your debt is 10,000 or less, cash on delivery is available again. If you think a debt is unfair, contact support: an admin can write it off.
 
 ### Use your own rider
 1. At the courier step, press "Mon propre livreur" and enter the rider's number (BSR-XXXX, on their badge). They must be an approved BayamSafe rider.
@@ -69,6 +71,11 @@ If the rider says the agency charged more than the fee on the order, you get a r
 ### Change your payout number (new this sprint)
 Send `/payout` and enter the new number. An admin must approve it in the dashboard ("Numéros de paiement") before it is used.
 
+**(Sprint 2)** After approval, the new number only becomes active **24 hours later**. Your old number is notified on Telegram, and your withdrawals are paused during those 24 hours. Orders still complete normally; payouts go to the old number until the new one is active.
+
+### Your own rider and a failed delivery (Sprint 2)
+If your own rider reports that the buyer was absent or refused the parcel, the buyer gets a full refund and the riders' trips are charged to you (deducted from your next payouts).
+
 ### If your account is suspended
 You can't create orders and the bot tells you so. Contact support.
 
@@ -90,6 +97,7 @@ You can edit the address, the landmark and the voice note after paying. If a rid
 ### Follow your order
 - Press "Suivre ma commande sur Telegram" on the checkout page. You then get the steps and your code in Telegram, and you can cancel from there.
 - While the rider heads to you, the page shows their photo, plate, rider number, live position, distance and an estimated arrival time. Check the rider's number with `/verify` in the bot if you want.
+- **(Sprint 2)** The rider's phone number appears only once the parcel is on its way. For prepaid orders it shows only on the phone that paid; for cash on delivery, on any device with your link.
 
 ### Receive the parcel
 1. Check the parcel in front of the rider.
@@ -99,7 +107,8 @@ You can edit the address, the landmark and the voice note after paying. If a rid
 ### Cancel
 Press "Annuler la commande" on the checkout page, until the rider picks the parcel up.
 - Before paying: nothing is charged.
-- After paying: full refund. A paid order can only be cancelled from the phone that paid.
+- After paying, before a rider accepted: full refund. A paid order can only be cancelled from the phone that paid.
+- **(Sprint 2)** After paying, once a rider has accepted: the rider gets **half of the delivery fee**, taken from your refund. The cancel screen shows the exact amount before you confirm, so you can decide. You get the rest back.
 - After pickup: you can't cancel; ask for a return by reporting a problem.
 
 ### If you are not there when the rider arrives
@@ -150,12 +159,12 @@ You have 45 minutes after accepting to pick the parcel up, or the job is release
 Press "Vendeur absent" (button "🏪"). The job returns to the pool and you are **not penalised**.
 
 ### If the buyer isn't there
-1. Press "Client absent" (button "🚪"). The buyer is notified.
+1. Press "Client absent" (button "🚪"). The buyer is notified. **(Sprint 2)** You must be within 250 m of the drop-off with a location shared in the last 5 minutes, or the bot refuses. Keep your live location on.
 2. Wait 15 minutes. "Retourner au vendeur" is refused before that.
 3. Press "Retourner au vendeur" and bring the parcel back to the seller.
 
 ### If the buyer refuses
-Press "Client refuse" (button "🙅"), then bring the parcel back to the seller. For prepaid orders, the trips you ran are paid.
+Press "Client refuse" (button "🙅"), then bring the parcel back to the seller. **(Sprint 2)** The same GPS rule applies: within 250 m of the drop-off, location under 5 minutes old. The trips you ran are paid, on prepaid orders and on cash orders. On cash orders you receive the delivery fee, charged to the seller. With a seller's own rider, the legs are charged to the seller.
 
 ### If the seller cancels after you accepted
 You receive **half of the delivery fee**, paid by the seller.
@@ -167,6 +176,7 @@ Press "Signaler un problème" and describe it (damaged parcel, wrong address). T
 - `/earnings` (also `/gains`) shows this week, this month, all time, pending, and the cash you kept on cash-on-delivery jobs.
 - `/retrait` withdraws your free (unreserved) deposit.
 - `/payout` requests a change of your payout number; an admin approves it.
+- **(Sprint 2)** After an admin approves a new payout number, it becomes active 24 hours later. During those 24 hours `/retrait` is paused and your old number is notified on Telegram.
 
 ### Check another rider
 `/verify` checks a rider number.
@@ -181,6 +191,7 @@ Admins use the `/admin` dashboard (login with the admin key or username and pass
 - **Verification queue:** approve or refuse riders, sellers and verified badges, with the selfie-over-ID face-match slider. Approvals also work from the Telegram review cards.
 - **Orders:** filter by status. Open an order for its history and ledger entries.
 - **Stuck payouts:** payouts that failed 5 times or crashed mid-send are in `NEEDS_REVIEW`. Check the Campay dashboard, then mark them sent or retry.
+- **(Sprint 2) "Retraits à vérifier":** withdrawals and payouts whose gateway result was unclear. Nothing is resent automatically. Check the Campay dashboard, then press **"Marquer envoyé"** if the money left, or **"Annuler et recréditer"** if it did not (the amount goes back to the person's balance). Both actions go to the audit journal.
 
 ### Resolve a dispute
 Open the disputed order, read both sides and the buyer's photos (up to 5), then choose:
@@ -193,7 +204,9 @@ Open the disputed order, read both sides and the buyer's photos (up to 5), then 
 - **Reassign or "Retirer le livreur".** Remove sends the job back to the pool (before pickup). After pickup, name the rider who takes over.
 - **Resend the code ("Renvoyer le code"):** after checking the buyer's identity by phone, send the release code to their Telegram. The buyer must be following the order on Telegram.
 - **Suspend ("Suspendre") or unsuspend a seller.** A suspended seller can't create orders.
-- **Approve payout-number changes** requested with `/payout`, in the "Numéros de paiement" tab.
+- **Approve payout-number changes** requested with `/payout`, in the "Numéros de paiement" tab. **(Sprint 2)** An approved number is shown as scheduled and becomes active 24 hours later; the old contact is notified and withdrawals are paused meanwhile.
+- **(Sprint 2) Write off a seller's debt:** open the seller's drawer and use the debt write-off. A seller owing more than 10,000 FCFA can only create prepaid orders. Every write-off is recorded in the audit journal.
+- **Cancelling an order** after a rider accepted pays the rider nothing (a buyer's own cancel pays the rider half the delivery fee).
 - **Audit journal ("Journal" tab):** every admin action is recorded with who, when and what.
 
 ### Alerts to act on

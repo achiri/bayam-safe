@@ -62,6 +62,10 @@ export interface User {
   payoutPhone?: string;
   /** Requested new payout number, waiting for admin approval. */
   pendingPayoutPhone?: string;
+  /** Set once an admin approved the pending number: it becomes the payout number at this time (24 h later). */
+  payoutPhoneEffectiveAt?: string;
+  /** When the payout number last changed; withdrawals stay paused for 24 h after. */
+  payoutPhoneChangedAt?: string;
   /** FCFA the seller owes the platform (e.g. half delivery fee after a late cancel); taken from next payouts. */
   owedToPlatform?: number;
   /** Times a rider reported the seller absent at pickup. */
@@ -214,6 +218,8 @@ export interface Order {
   lastMileRiderId?: string;
   /** The seller's own rider (by BayamSafe rider number): only they are offered the first leg. */
   preferredRiderId?: string;
+  /** True while the first-leg rider is the one the seller chose (survives the preferred id being cleared). */
+  sellerChoseRider?: boolean;
 
   /** Buyer following the order on Telegram (linked from the checkout page). */
   buyerTelegramId?: number;
@@ -280,6 +286,7 @@ export type LedgerAccount =
   | 'BUYER_REFUND_PAYABLE'
   | 'PLATFORM_REVENUE'
   | 'RIDER_FLOAT' // rider collateral float
+  | 'PLATFORM_WRITE_OFF' // debts the admin forgave (expense)
   | 'MERCHANT_RECEIVABLE'; // what sellers owe the platform (negative = owed), recovered from payouts
 
 export interface LedgerLine {

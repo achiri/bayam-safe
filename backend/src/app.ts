@@ -97,6 +97,8 @@ export function startJobs(app: App): () => void {
     setInterval(run('reoffer', () => app.orders.reofferStale()), 10 * 60_000),
     setInterval(run('timeouts', () => app.orders.enforceTimeouts()), 5 * 60_000),
     setInterval(run('sync-payments', () => app.orders.syncPendingPayments()), 2 * 60_000),
+    setInterval(run('payout-phones', () => app.users.activateDuePayoutPhones()), 10 * 60_000),
+    setInterval(run('sweep-withdrawals', () => app.riders.sweepWithdrawals()), 5 * 60_000),
     // Bot conversation state is only useful for a few days: drop abandoned sessions daily.
     setInterval(run('purge-bot-sessions', () => app.store.purgeBotSessions(new Date(Date.now() - BOT_SESSION_RETENTION_MS).toISOString())), 24 * 3600_000)
   ];

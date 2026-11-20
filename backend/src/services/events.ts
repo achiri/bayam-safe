@@ -25,6 +25,7 @@ export type DomainEvent =
   | { type: 'payout.delayed'; order: Order; payout: Payout }
   | { type: 'payout_phone.requested'; user: User }
   | { type: 'payout_phone.decided'; user: User; approved: boolean }
+  | { type: 'payout_phone.activated'; user: User }
   | { type: 'order.disputed'; order: Order }
   | { type: 'order.payment_mismatch'; order: Order; paidAmount: number }
   | { type: 'payout.attention'; order: Order; payout: Payout }

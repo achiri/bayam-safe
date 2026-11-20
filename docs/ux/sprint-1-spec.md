@@ -46,3 +46,17 @@ states the effect and amount.
 - New sidebar item "Journal": last 200 audit entries (date, acteur, action, cible, note), refresh button.
 - Empty states: "Aucune demande en attente.", "Le journal est vide."
 - A11y: buttons are real `<button>`, inputs have `aria-label`, toasts are `role="status"`, drawers keep `role="dialog"`.
+
+## Sprint 2 additions (BS-402, BS-403, BS-405, BS-406, BS-407)
+
+Same conventions as above (44 px targets, labelled inputs, `role="status"` / `role="alert"`, confirm dialogs state the money effect).
+
+### Checkout (buyer)
+- **Rider phone absent** (`rider.phone` missing: only the paying device sees it, after pickup): the call button stays hidden. In the
+  absence banner the title becomes "Le livreur est devant chez vous. Vous avez 15 min : suivez la commande sur Telegram ou attendez son appel." and a line explains why no number is shown. EN equivalents exist.
+- **Cancel after a rider accepted** (`cancelFee` present): the cancel confirm reads "Le livreur est déjà en route : X FCFA (la moitié des frais de livraison) lui seront versés, vous serez remboursé de Y FCFA." with Y = `total - cancelFee`. Without `cancelFee` the old text is used.
+
+### Admin (French)
+- **Seller drawer, debt**: when `owedToPlatform > 0`, a "Dette envers la plateforme" card with amount input (1..owed, default full), required reason, "Effacer la dette" button and a confirm naming shop and amount (`POST /users/:id/write-off {amount, note}`). When `owedToPlatform > 10 000` a red badge "COD bloqué (dette > 10 000 FCFA)" shows in the drawer; the sellers list shows "COD bloqué".
+- **Sidebar "Retraits à vérifier"** with alert badge (`GET /topups?status=NEEDS_REVIEW`). One card per withdrawal: rider, code/phone, amount, date, reference; inputs for optional operator reference and required note. "Marquer envoyé" confirms "X a bien reçu N FCFA" (`POST /topups/:id/resolve {action:'MARK_SENT', reference, note}`); "Annuler et recréditer" confirms "N FCFA seront recrédités sur la caution" (`{action:'REVERSE', note}`). Empty state: "Aucun retrait à vérifier."
+- **Numéros de paiement**: rows with `payoutPhoneEffectiveAt` show "Approuvé · actif le <date>" instead of the buttons and are not counted in the badge. The approve confirm explains the 24 h delay and paused withdrawals.

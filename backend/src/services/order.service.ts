@@ -1,7 +1,7 @@
 import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError, conflict, forbidden, invalid, notFound } from '../domain/errors.js';
 import { assertGeoPoint, haversineKm } from '../domain/geo.js';
-import { computePricing, refundPlan, settlementPlan, PayoutPlanLine } from '../domain/money.js';
+import { computePricing, formatFcfa, refundPlan, settlementPlan, PayoutPlanLine, SELLER_DEBT_COD_LIMIT } from '../domain/money.js';
 import { DISPUTABLE_STATUSES, TERMINAL_STATUSES, canTransition, deliverableStatus, transition } from '../domain/order-state.js';
 import { detectOperator, normalizeCameroonPhone, normalizeContactPhone } from '../domain/phone.js';
 import { Secrets, newId, newReleaseCode, newTrackingCode, safeEqual } from '../domain/secrets.js';
@@ -77,7 +77,9 @@ export interface BuyerView {
   /** True when the order is paid but this device is not the one that paid. */
   releaseCodeOnOtherDevice: boolean;
   /** The rider currently carrying the parcel, so the buyer knows who will knock. */
-  rider?: { firstName: string; plateNumber: string; riderCode: string; vehicleType: string; hasPhoto: boolean; phone: string };
+  rider?: { firstName: string; plateNumber: string; riderCode: string; vehicleType: string; hasPhoto: boolean; /** Only for the paying device (any device for COD), once the parcel is on its way. */ phone?: string };
+  /** FCFA the buyer loses if they cancel now (half the delivery fee once a rider accepted a prepaid order); only present while cancellable at RIDER_ASSIGNED. */
+  cancelFee?: number;
   /** Live position of the rider while the parcel is on its way to the buyer. */
   tracking?: { lat: number; lng: number; at: string; distanceKm?: number; etaMin?: number; near: boolean };
   /** Whether a Telegram account follows this order. */
@@ -221,6 +223,13 @@ export class OrderService {
     if (input.paymentMode === 'COD' && (await this.buyerPrepaidOnly(buyerPhone))) {
       throw new AppError('BUYER_PREPAID_ONLY', 'Ce client a refusé 2 livraisons en cash ces 90 derniers jours : paiement à l’avance (séquestre) obligatoire.', 409);
     }
+    if (input.paymentMode === 'COD' && (merchant.owedToPlatform ?? 0) > SELLER_DEBT_COD_LIMIT) {
+      throw new AppError(
+        'SELLER_DEBT_PREPAID_ONLY',
+        `Vous devez ${formatFcfa(merchant.owedToPlatform ?? 0)} à BayamSafe (plafond ${formatFcfa(SELLER_DEBT_COD_LIMIT)}) : tant que cette dette n’est pas remboursée, seules les commandes payées à l’avance (séquestre) sont possibles.`,
+        409
+      );
+    }
     const recipientPhone = input.recipientPhone ? normalizeContactPhone(input.recipientPhone) : undefined;
 
     let originCity = merchant.city;
@@ -321,7 +330,9 @@ export class OrderService {
     const v = this.toBuyerView(o, sessionToken);
     const r = await this.activeRider(o);
     if (r) {
-      v.rider = { firstName: r.fullName.split(' ')[0], plateNumber: r.plateNumber, riderCode: r.riderCode, vehicleType: r.vehicleType, hasPhoto: !!r.selfieFileId, phone: r.phone };
+      // The rider's number is shown once the parcel is on its way, and (escrow) only to the device that paid.
+      const showPhone = HEADING_TO_BUYER.includes(o.status) && (o.paymentMode === 'COD' || this.secrets.verifyToken(sessionToken, o.buyerSessionHash));
+      v.rider = { firstName: r.fullName.split(' ')[0], plateNumber: r.plateNumber, riderCode: r.riderCode, vehicleType: r.vehicleType, hasPhoto: !!r.selfieFileId, phone: showPhone ? r.phone : undefined };
       v.tracking = this.trackingFor(o, r);
     }
     return v;
@@ -394,6 +405,7 @@ export class OrderService {
         confirmArrival: o.status === 'AT_AGENCY' && mayAct,
         addEvidence: o.status === 'DISPUTED' && (o.dispute?.evidence?.length ?? 0) < 5 && mayAct
       },
+      cancelFee: o.status === 'RIDER_ASSIGNED' && CANCELLABLE.includes(o.status) ? this.buyerCancelFee(o) : undefined,
       recipient: o.recipientName || o.recipientPhone ? { name: o.recipientName, phone: o.recipientPhone } : undefined,
       absence: o.absence?.side === 'BUYER' && o.status === deliverableStatus(o) ? { side: 'BUYER', at: o.absence.at } : undefined,
       releaseCode: showCode ? this.secrets.decrypt(o.releaseCodeEnc) : undefined,
@@ -401,6 +413,11 @@ export class OrderService {
       followingOnTelegram: !!o.buyerTelegramId,
       dispute: o.dispute && { reason: o.dispute.reason, openedAt: o.dispute.openedAt, resolution: o.dispute.resolution }
     };
+  }
+
+  /** What a buyer cancel costs at this moment: half the delivery fee to the rider, prepaid orders only (cash: nothing is held). */
+  private buyerCancelFee(o: Order): number {
+    return o.status === 'RIDER_ASSIGNED' && !!o.firstMileRiderId && o.paymentMode === 'ESCROW' ? Math.floor(o.deliveryFee / 2) : 0;
   }
 
   async updateDeliveryDetails(orderId: string, buyerToken: string | undefined, patch: DeliveryDetailsPatch): Promise<BuyerView> {
@@ -649,6 +666,14 @@ export class OrderService {
     return order;
   }
 
+  /** Rider number for the buyer's Telegram: only once the parcel is on its way, and (escrow) only if Telegram is bound to the paying device (policy 12). */
+  riderPhoneForTelegram(o: Order, rider?: { phone: string }): string | undefined {
+    if (!rider || !HEADING_TO_BUYER.includes(o.status) || !o.buyerTelegramId) return undefined;
+    if (o.paymentMode === 'COD') return rider.phone;
+    const paidOnThisDevice = !!o.payment.confirmedAt && !!o.buyerSessionHash && o.buyerSessionHash === o.followSessionHash;
+    return paidOnThisDevice ? rider.phone : undefined;
+  }
+
   /**
    * The release code for the buyer's Telegram: for cash orders always (anyone with the link sees it),
    * for escrow only once paid and only if Telegram was linked from the device that paid.
@@ -732,6 +757,7 @@ export class OrderService {
             o.codReserved = o.itemPrice;
           }
           o.firstMileRiderId = r.id;
+          o.sellerChoseRider = o.preferredRiderId === r.id ? true : undefined;
           transition(o, 'RIDER_ASSIGNED', r.fullName);
         } else if (o.status === 'AT_AGENCY' || o.status === 'AT_DESTINATION_HUB') {
           if (o.firstMileRiderId === r.id) throw invalid('You already ran the first leg of this order.');
@@ -756,6 +782,7 @@ export class OrderService {
       if (o.status === 'RIDER_ASSIGNED' && o.firstMileRiderId === rider.id) {
         await this.releaseCodReserve(o, repo);
         o.firstMileRiderId = undefined;
+        o.sellerChoseRider = undefined;
         if (o.preferredRiderId === rider.id) o.preferredRiderId = undefined; // open the job to everyone
         this.resetStallReminders(o);
         transition(o, 'AWAITING_RIDER', 'rider released the job');
@@ -1007,11 +1034,17 @@ export class OrderService {
         transition(o, 'DELIVERED', `split decided by ${by} (dispute split, not a normal delivery)`);
         return;
       }
+      const failedDelivery = o.dispute.kind === 'BUYER_ABSENT' || o.dispute.kind === 'BUYER_REFUSED';
       if (o.paymentMode === 'ESCROW') {
         if (o.dispute.kind === 'SELLER_RETURN') {
           // The seller asked for the return: buyer gets everything back, riders are paid by the seller.
           await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total }]);
           await this.chargeSellerForRiders(o, repo, legs.filter((l) => l.kind !== 'BUYER_REFUND'), 'return requested by seller');
+        } else if (failedDelivery && o.sellerChoseRider && o.type !== 'INTER_CITY') {
+          // Inter-city deliveries are made by the destination-city rider, never the seller's chosen (first-leg) rider.
+          // The seller's own rider reported absent/refused (policy 7): the buyer is not charged, the seller pays the legs.
+          await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total }]);
+          await this.chargeSellerForRiders(o, repo, legs.filter((l) => l.kind !== 'BUYER_REFUND'), 'failed delivery by the seller own rider');
         } else {
           await this.bookRefund(o, repo, legs);
         }
@@ -1019,6 +1052,9 @@ export class OrderService {
         await this.releaseCodReserve(o, repo);
         if (o.dispute.kind === 'SELLER_RETURN') {
           await this.chargeSellerForRiders(o, repo, [{ kind: 'FIRST_MILE_RIDER' as PayoutKind, amount: o.deliveryFee }].filter((l) => l.amount > 0), 'return requested by seller');
+        } else if (failedDelivery) {
+          // Cash order, buyer absent or refused (policy 10): the rider ran the leg, the seller pays the delivery fee.
+          await this.chargeSellerForRiders(o, repo, [{ kind: 'FIRST_MILE_RIDER' as PayoutKind, amount: o.deliveryFee }], 'cash buyer absent or refused');
         }
       }
       transition(o, 'REFUNDED', `refunded by ${by}`);
@@ -1066,8 +1102,12 @@ export class OrderService {
         transition(o, 'CANCELLED', `cancelled by ${by} before payment`);
       } else if (o.status === 'AWAITING_RIDER' || o.status === 'RIDER_ASSIGNED') {
         const lateSellerCancel = by === 'seller' && o.status === 'RIDER_ASSIGNED' && !!o.firstMileRiderId;
+        // Buyer cancels after a rider accepted a prepaid order: half the delivery fee goes to the rider, out of the refund (policy 9).
+        const riderShare = by === 'buyer' ? this.buyerCancelFee(o) : 0;
         if (o.paymentMode === 'COD') {
           await this.releaseCodReserve(o, repo);
+        } else if (riderShare > 0) {
+          await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total - riderShare }, { kind: 'FIRST_MILE_RIDER', amount: riderShare }]);
         } else {
           await this.bookRefund(o, repo, [{ kind: 'BUYER_REFUND', amount: o.total }]);
         }
@@ -1076,7 +1116,7 @@ export class OrderService {
           if (fee > 0) await this.chargeSellerForRiders(o, repo, [{ kind: 'FIRST_MILE_RIDER', amount: fee }], 'seller cancelled after the rider set off');
         }
         if (o.paymentMode === 'COD') transition(o, 'CANCELLED', `cancelled by ${by} before pickup`);
-        else transition(o, 'REFUNDED', `cancelled by ${by} before pickup, full refund`);
+        else transition(o, 'REFUNDED', riderShare > 0 ? `cancelled by ${by} before pickup, refund minus ${riderShare} FCFA for the rider` : `cancelled by ${by} before pickup, full refund`);
       } else {
         throw new AppError('ALREADY_PICKED_UP', 'Le colis a déjà été récupéré : il faut d’abord le retourner au vendeur.', 409);
       }
@@ -1410,6 +1450,7 @@ export class OrderService {
         if (first) {
           await this.releaseCodReserve(o, repo);
           o.firstMileRiderId = undefined;
+          o.sellerChoseRider = undefined;
           if (o.preferredRiderId === riderId) o.preferredRiderId = undefined; // open the job to everyone
           this.resetStallReminders(o);
           transition(o, 'AWAITING_RIDER', 'rider did not pick up within 45 min');
@@ -1576,6 +1617,7 @@ export class OrderService {
       if (o.status !== 'RIDER_ASSIGNED' || o.firstMileRiderId !== rider.id) throw conflict('Nothing to pick up for you on this order.');
       await this.releaseCodReserve(o, repo);
       o.firstMileRiderId = undefined;
+      o.sellerChoseRider = undefined;
       o.absence = { side: 'SELLER', riderId: rider.id, at: new Date().toISOString(), location: rider.location };
       this.resetStallReminders(o);
       transition(o, 'AWAITING_RIDER', 'seller absent at pickup');
@@ -1712,6 +1754,7 @@ export class OrderService {
           await this.releaseCodReserve(o, repo);
           if (o.preferredRiderId === o.firstMileRiderId) o.preferredRiderId = undefined; // open the job to everyone
           o.firstMileRiderId = undefined;
+          o.sellerChoseRider = undefined;
           this.resetStallReminders(o);
           transition(o, 'AWAITING_RIDER', 'rider removed by admin');
           return 'FIRST' as const;
@@ -1749,6 +1792,7 @@ export class OrderService {
           o.codReserved = o.itemPrice;
         }
         o.firstMileRiderId = rider.id;
+        o.sellerChoseRider = o.preferredRiderId === rider.id ? true : undefined; // an admin-picked rider is not the seller's choice
       } else {
         o.lastMileRiderId = rider.id;
       }

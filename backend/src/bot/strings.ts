@@ -99,7 +99,13 @@ const fr = {
   payoutDelayed: (code: string) => `⏳ <code>${esc(code)}</code> : votre paiement Mobile Money est retardé. Nous réessayons automatiquement.`,
   payoutPhoneRequested: (name: string, phone: string, id: string) => `📱 Payout number change requested by ${esc(name)}: <code>${esc(phone)}</code>\nUser id: <code>${esc(id)}</code>`,
   payoutPhoneDecided: (approved: boolean, phone?: string) =>
-    approved ? `✅ Votre numéro de paiement est maintenant ${esc(phone)}.` : '❌ Votre demande de changement de numéro de paiement a été refusée.',
+    approved
+      ? `✅ Changement de numéro approuvé : ${esc(phone)} sera actif dans 24 h. D’ici là, vos paiements vont encore à l’ancien numéro et les retraits de caution sont suspendus (24 h de plus après l’activation). Ce n’était pas vous ? Contactez le support tout de suite.`
+      : '❌ Votre demande de changement de numéro de paiement a été refusée.',
+  payoutPhoneActivated: (phone: string) =>
+    `📱 Votre numéro de paiement est maintenant ${esc(phone)}. Les retraits de caution restent suspendus 24 h par sécurité. Ce n’était pas vous ? Contactez le support tout de suite.`,
+  codDebtBlocked: (owed: number, limit: number) =>
+    `⚠️ Vous devez ${formatFcfa(owed, 'fr')} à BayamSafe (plafond ${formatFcfa(limit, 'fr')}). Tant que cette dette n’est pas remboursée, seules les commandes payées à l’avance (séquestre) sont possibles. Elle se rembourse toute seule sur vos prochaines ventes.`,
 
   helpExtra:
     '\n\n<b>Paiements</b>\n/payout 6XXXXXXXX — changer mon numéro de paiement\n/earnings — mes gains (livreurs)\n/retrait 5000 — retirer ma caution libre (livreurs)'
@@ -194,7 +200,13 @@ const en: Strings = {
   payoutDelayed: (code) => `⏳ <code>${esc(code)}</code>: your Mobile Money payout is delayed. We retry automatically.`,
   payoutPhoneRequested: (name, phone, id) => `📱 Payout number change requested by ${esc(name)}: <code>${esc(phone)}</code>\nUser id: <code>${esc(id)}</code>`,
   payoutPhoneDecided: (approved, phone) =>
-    approved ? `✅ Your payout number is now ${esc(phone)}.` : '❌ Your payout number change request was refused.',
+    approved
+      ? `✅ Number change approved: ${esc(phone)} becomes active in 24 h. Until then your payments still go to the old number and float withdrawals are paused (another 24 h after activation). Not you? Contact support right away.`
+      : '❌ Your payout number change request was refused.',
+  payoutPhoneActivated: (phone) =>
+    `📱 Your payout number is now ${esc(phone)}. Float withdrawals stay paused for 24 h as a precaution. Not you? Contact support right away.`,
+  codDebtBlocked: (owed, limit) =>
+    `⚠️ You owe BayamSafe ${formatFcfa(owed, 'en')} (limit ${formatFcfa(limit, 'en')}). Until it is paid back, only prepaid (escrow) orders are possible. It is repaid automatically from your next sales.`,
 
   helpExtra:
     '\n\n<b>Payments</b>\n/payout 6XXXXXXXX — change my payout number\n/earnings — my earnings (riders)\n/retrait 5000 — withdraw free float (riders)'

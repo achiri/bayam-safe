@@ -3,6 +3,7 @@ import { App } from '../app.js';
 import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError } from '../domain/errors.js';
 import { googleMapsRoute } from '../domain/geo.js';
+import { SELLER_DEBT_COD_LIMIT } from '../domain/money.js';
 import { isValidContactPhone, normalizeContactPhone } from '../domain/phone.js';
 import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../domain/types.js';
 import { DomainEvent } from '../services/events.js';
@@ -574,6 +575,11 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       await html(ctx, x(ctx.lang).codBlocked);
       return;
     }
+    const owed = ctx.user?.owedToPlatform ?? 0;
+    if (ctx.match[1] === 'COD' && owed > SELLER_DEBT_COD_LIMIT) {
+      await html(ctx, x(ctx.lang).codDebtBlocked(owed, SELLER_DEBT_COD_LIMIT));
+      return;
+    }
     f.d.mode = ctx.match[1] as PaymentMode;
     await askCourier(ctx);
   }));
@@ -1015,7 +1021,7 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     }
     const tr = orders.trackingFor(o, r);
     const name = r.fullName.split(' ')[0];
-    if (!tr) return html(ctx, ctx.s.whereNone(r.phone));
+    if (!tr) return html(ctx, ctx.s.whereNone(orders.riderPhoneForTelegram(o, r)));
     await ctx.replyWithLocation(tr.lat, tr.lng);
     await html(ctx, ctx.s.whereInfo(name, Math.max(0, Math.round((Date.now() - Date.parse(tr.at)) / 60000)), tr.distanceKm, tr.etaMin), {
       reply_markup: new InlineKeyboard().text(ctx.s.btnWhere, `b:where:${o.id}`)
@@ -1269,13 +1275,15 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       case 'RIDER_ASSIGNED':
       case 'LAST_MILE_ASSIGNED': {
         const r = await riderFor(o.status === 'RIDER_ASSIGNED' ? o.firstMileRiderId : o.lastMileRiderId);
-        if (r) await toBuyer(o, (s) => s.bRider(r.fullName.split(' ')[0], r.plateNumber, r.riderCode, r.phone));
+        // No phone number yet: it is shown once the parcel is on its way (policy 12).
+        const fee = o.status === 'RIDER_ASSIGNED' && o.paymentMode === 'ESCROW' ? Math.floor(o.deliveryFee / 2) : 0;
+        if (r) await toBuyer(o, (s) => s.bRider(r.fullName.split(' ')[0], r.plateNumber, r.riderCode, fee));
         return;
       }
       case 'IN_TRANSIT': {
         const r = await riderFor(o.firstMileRiderId);
         if (o.type === 'INTER_CITY') return toBuyer(o, (s) => s.mStatus(o.trackingCode, s.status(o.status)));
-        return toBuyer(o, (s) => s.bPickedUp(r?.fullName.split(' ')[0] ?? ''), true);
+        return toBuyer(o, (s) => s.bPickedUp(r?.fullName.split(' ')[0] ?? '', orders.riderPhoneForTelegram(o, r)), true);
       }
       case 'AT_AGENCY': {
         const ag = getAgency(o.originAgencyId ?? '');
@@ -1285,12 +1293,14 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         return toBuyer(o, (s) => s.bHub(o.destinationCity ?? ''));
       case 'OUT_FOR_DELIVERY': {
         const r = await riderFor(o.lastMileRiderId);
-        return toBuyer(o, (s) => s.bOut(r?.fullName.split(' ')[0] ?? ''), true);
+        return toBuyer(o, (s) => s.bOut(r?.fullName.split(' ')[0] ?? '', orders.riderPhoneForTelegram(o, r)), true);
       }
       case 'DELIVERED':
         return toBuyer(o, (s) => s.bDelivered);
-      case 'REFUNDED':
-        return toBuyer(o, (s) => s.bRefunded);
+      case 'REFUNDED': {
+        const fee = cancelledBy(o) === 'buyer' ? Number(/refund minus (\d+) FCFA/.exec(o.history.at(-1)?.note ?? '')?.[1] ?? 0) : 0;
+        return toBuyer(o, (s) => (fee > 0 ? s.bCancelledFee(fee) : s.bRefunded));
+      }
       case 'CANCELLED':
         return toBuyer(o, (s) => (cancelledBy(o) === 'buyer' ? s.bCancelledByYou : s.bCancelled));
     }
@@ -1544,7 +1554,10 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
         await toAdmins(x('en').payoutPhoneRequested(e.user.fullName, e.user.pendingPayoutPhone ?? '', e.user.id));
         return;
       case 'payout_phone.decided':
-        await send(e.user.telegramId, x(e.user.lang).payoutPhoneDecided(e.approved, e.user.payoutPhone));
+        await send(e.user.telegramId, x(e.user.lang).payoutPhoneDecided(e.approved, e.user.pendingPayoutPhone));
+        return;
+      case 'payout_phone.activated':
+        await send(e.user.telegramId, x(e.user.lang).payoutPhoneActivated(e.user.payoutPhone ?? ''));
         return;
       case 'topup.attention':
         await toAdmins(

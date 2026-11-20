@@ -13,6 +13,17 @@ These come from the customer. Don't change them without asking.
 4. **2 cash-on-delivery refusals or no-shows in 90 days** → that buyer number can only use prepaid orders.
 5. Notifications go by Telegram and the checkout page only. SMS and WhatsApp come later.
 
+### Second round (2026-11-20, after the security and architecture reviews)
+
+6. Seller grabbing the paying-phone session: accept the risk until SMS exists. Keep the 20-minute delay and the alerts.
+7. When the seller's own rider reports "absent" or "refused", the buyer gets a full refund and the riders' legs are charged to the seller.
+8. A payout number change takes effect 24 h after admin approval. The old number is notified, and withdrawals pause for those 24 h.
+9. Buyer cancels after a rider accepted: the rider gets half the delivery fee, taken from the buyer's refund. An admin cancel pays the rider nothing.
+10. COD buyer absent or refused: the rider gets the delivery fee, charged to the seller. The buyer still gets a refusal strike.
+11. A seller who owes more than 10,000 FCFA can only create prepaid orders. An admin can write off debt, and the write-off is logged in the audit journal.
+12. Rider phone is shown only to the paying device (any device for COD), and only once the parcel is on the way.
+13. GPS rule for "absent" and "refused": within 250 m of the drop-off, location under 5 minutes old.
+
 ## Phase 1: nothing gets stuck, no money gets lost · P0 · In sprint
 
 - **BS-101 Timeouts.**
@@ -75,6 +86,24 @@ These come from the customer. Don't change them without asking.
 - **BS-303 Landing page and product docs.**
   - AC: the landing page explains cancel and refund rules, own rider, tracking, and the absent and refusal rules.
   - AC: `docs/USER-GUIDE.md` and `docs/POLICIES.md` exist and match the code.
+
+## Sprint 2: customer decisions and withdrawal safety · P0 · In sprint
+
+- **BS-401 Own-rider failed delivery charged to the seller (decision 7).**
+- **BS-402 Payout number cool-down (decision 8).** 24 h delay after approval, old number notified, withdrawals paused for 24 h.
+- **BS-403 Buyer late cancel pays the rider half the fee (decision 9).**
+- **BS-404 COD failed delivery pays the rider, charged to the seller (decision 10).**
+- **BS-405 Seller debt cap and admin write-off (decision 11).**
+- **BS-406 Rider phone visibility (decision 12).**
+- **BS-407 Withdrawal safety.**
+  - AC: a background sweeper re-checks PENDING and SENDING withdrawals with the gateway.
+  - AC: the admin can resolve a NEEDS_REVIEW withdrawal ("mark sent" or "reverse"), and the action is audited.
+
+## Sprint 2 follow-ups (security, later)
+
+- **BS-408 Payout number: let the user cancel a pending change** themselves (today only an admin can reject it).
+- **BS-409 Withdrawal sweeper:** move the SENDING → NEEDS_REVIEW flag inside a transaction.
+- **BS-410 COD buyer cancel after a rider accepted** pays the rider nothing, because there is no prepayment to take the fee from. Needs the customer's decision.
 
 ## Later
 

@@ -33,7 +33,7 @@ export function redactUser(u: User) {
 }
 
 const ACCOUNTS: LedgerAccount[] = [
-  'GATEWAY_CLEARING', 'ESCROW', 'MERCHANT_PAYABLE', 'RIDER_PAYABLE', 'BUYER_REFUND_PAYABLE', 'PLATFORM_REVENUE', 'RIDER_FLOAT', 'MERCHANT_RECEIVABLE'
+  'GATEWAY_CLEARING', 'ESCROW', 'MERCHANT_PAYABLE', 'RIDER_PAYABLE', 'BUYER_REFUND_PAYABLE', 'PLATFORM_REVENUE', 'RIDER_FLOAT', 'MERCHANT_RECEIVABLE', 'PLATFORM_WRITE_OFF'
 ];
 
 export interface ServerOptions {
@@ -423,7 +423,47 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
       res.json(redactUser(u));
     })
   );
-  admin.get('/payout-phones', h(async (_req, res) => res.json((await users.listPendingPayoutPhones()).map(redactUser))));
+  /** Requests awaiting a decision (no payoutPhoneEffectiveAt) and approved ones waiting for their 24 h (scheduled: true). */
+  admin.get(
+    '/payout-phones',
+    h(async (_req, res) =>
+      res.json((await users.listPendingPayoutPhones()).map((u) => ({ ...redactUser(u), scheduled: !!u.payoutPhoneEffectiveAt })))
+    )
+  );
+  admin.post(
+    '/users/:id/write-off',
+    h(async (req, res) => {
+      const amount = req.body?.amount;
+      if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount < 1) throw invalid('amount must be a whole number of FCFA, at least 1');
+      const note = req.body?.note;
+      if (typeof note !== 'string' || note.trim().length < 3) throw invalid('note is required');
+      const u = await users.writeOffDebt(req.params.id, amount, note);
+      await audit(res, 'debt.write_off', req.params.id, `${amount} FCFA: ${note.slice(0, 500)}`);
+      res.json(redactUser(u));
+    })
+  );
+  admin.get(
+    '/topups',
+    h(async (req, res) => {
+      const status = String(req.query.status ?? 'NEEDS_REVIEW');
+      if (!['PENDING', 'SENDING', 'CONFIRMED', 'FAILED', 'NEEDS_REVIEW'].includes(status)) throw invalid('Invalid status');
+      res.json(await riders.listWithdrawalsForReview(status as any));
+    })
+  );
+  admin.post(
+    '/topups/:id/resolve',
+    h(async (req, res) => {
+      const action = req.body?.action;
+      if (action !== 'MARK_SENT' && action !== 'REVERSE') throw invalid('action must be MARK_SENT or REVERSE');
+      const note = req.body?.note;
+      if (typeof note !== 'string' || note.trim().length < 3) throw invalid('note is required');
+      const ref = req.body?.reference;
+      if (ref !== undefined && typeof ref !== 'string') throw invalid('reference must be a string');
+      const t = await riders.resolveWithdrawal(req.params.id, action, note, ref);
+      await audit(res, `withdrawal.${action.toLowerCase()}`, req.params.id, `${t.amount} FCFA: ${note}${ref ? ` (ref ${ref})` : ''}`);
+      res.json(t);
+    })
+  );
   admin.post(
     '/users/:id/payout-phone',
     h(async (req, res) => {
@@ -431,7 +471,8 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
       const before = await store.getUser(req.params.id);
       const oldPhone = before?.payoutPhone ?? before?.phone ?? '?';
       const newPhone = before?.pendingPayoutPhone ?? '?';
-      const u = await users.decidePayoutPhone(req.params.id, req.body.approve);
+      const expected = typeof req.body?.expectedPhone === 'string' ? req.body.expectedPhone : undefined;
+      const u = await users.decidePayoutPhone(req.params.id, req.body.approve, new Date(), expected);
       await audit(res, req.body.approve ? 'payout_phone.approve' : 'payout_phone.reject', req.params.id, `${oldPhone} -> ${newPhone}`);
       res.json(redactUser(u));
     })

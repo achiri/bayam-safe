@@ -90,19 +90,21 @@ const fr = {
   bCode: (code: string) => `🔑 <b>Votre code de libération : <code>${esc(code)}</code></b>\nDonnez-le au livreur uniquement après avoir vérifié le colis.`,
   bCodeOtherDevice: 'ℹ️ Le code de libération est envoyé seulement si ce suivi a été activé depuis le téléphone qui a payé. Il reste visible sur la page de paiement de ce téléphone.',
   bPaid: '🔒 <b>Paiement reçu.</b> Votre argent est bloqué chez BayamSafe : le vendeur ne le reçoit qu’après votre code.',
-  bRider: (name: string, plate: string, code: string, phone: string) =>
-    `🏍️ <b>${esc(name)}</b> (${esc(plate)} · <code>${esc(code)}</code>) va chercher votre colis chez le vendeur.\n📞 ${esc(phone)}\nVérifiez son badge à la porte : /verify ${esc(code)}`,
-  bPickedUp: (name: string) => `📦 <b>Colis récupéré !</b> ${esc(name)} vient vers vous.`,
+  bRider: (name: string, plate: string, code: string, cancelFee = 0) =>
+    `🏍️ <b>${esc(name)}</b> (${esc(plate)} · <code>${esc(code)}</code>) va chercher votre colis chez le vendeur.\nVérifiez son badge à la porte : /verify ${esc(code)}` +
+    (cancelFee > 0 ? `\n⚠️ Si vous annulez maintenant, ${cancelFee} FCFA (la moitié des frais de livraison) iront au livreur et seront retirés de votre remboursement.` : ''),
+  bPickedUp: (name: string, phone?: string) => `📦 <b>Colis récupéré !</b> ${esc(name)} vient vers vous.${phone ? `\n📞 ${esc(phone)}` : ''}`,
+  bCancelledFee: (fee: number) => `✖️ Commande annulée. Le livreur avait déjà accepté : ${fee} FCFA lui reviennent (moitié des frais de livraison), le reste de votre paiement est remboursé sur votre Mobile Money.`,
   bAtAgency: (agency: string, waybill: string) => `🚌 Colis déposé à l’agence <b>${esc(agency)}</b>. Bordereau : <code>${esc(waybill)}</code>.`,
   bHub: (city: string) => `🏁 Votre colis est arrivé à <b>${esc(city)}</b>. Un livreur local va le récupérer.`,
-  bOut: (name: string) => `🛵 <b>${esc(name)}</b> est en route vers vous avec le colis.`,
+  bOut: (name: string, phone?: string) => `🛵 <b>${esc(name)}</b> est en route vers vous avec le colis.${phone ? `\n📞 ${esc(phone)}` : ''}`,
   bNear: (name: string, meters: number) => `📍 <b>${esc(name)} est à environ ${meters} m.</b> Préparez votre code, et vérifiez le colis avant de le donner.`,
   bDelivered: '🎉 <b>Livraison confirmée.</b> Merci d’avoir acheté avec BayamSafe !',
   bDisputed: (reason: string) => `⚠️ Un problème a été signalé (« ${esc(reason)} »). Votre argent reste bloqué jusqu’à la décision de notre équipe.`,
   bRefunded: '↩️ Remboursement envoyé sur le numéro Mobile Money qui a payé.',
   bCancelled: '✖️ Commande annulée par le vendeur.',
   btnWhere: '📍 Où est mon livreur ?',
-  whereNone: (phone: string) => `Le livreur n’a pas partagé sa position récemment. Vous pouvez l’appeler : ${esc(phone)}`,
+  whereNone: (phone?: string) => `Le livreur n’a pas partagé sa position récemment.${phone ? ` Vous pouvez l’appeler : ${esc(phone)}` : ' Réessayez dans quelques minutes.'}`,
   whereInfo: (name: string, mins: number, dist?: number, eta?: number) =>
     `📍 Position de ${esc(name)} il y a ${mins} min` + (dist !== undefined ? ` · à ${dist} km de vous (≈ ${eta} min)` : ''),
   whereNotYet: 'Le colis n’est pas encore en route vers vous. Vous serez prévenu dès qu’il part.',
@@ -328,19 +330,21 @@ const en: Strings = {
   bCode: (code) => `🔑 <b>Your release code: <code>${esc(code)}</code></b>\nOnly give it to the rider after checking the parcel.`,
   bCodeOtherDevice: 'ℹ️ The release code is only sent if tracking was turned on from the phone that paid. It stays visible on that phone’s payment page.',
   bPaid: '🔒 <b>Payment received.</b> Your money is locked with BayamSafe: the seller only gets it after your code.',
-  bRider: (name, plate, code, phone) =>
-    `🏍️ <b>${esc(name)}</b> (${esc(plate)} · <code>${esc(code)}</code>) is collecting your parcel from the seller.\n📞 ${esc(phone)}\nCheck their badge at the door: /verify ${esc(code)}`,
-  bPickedUp: (name) => `📦 <b>Parcel picked up!</b> ${esc(name)} is coming to you.`,
+  bRider: (name, plate, code, cancelFee = 0) =>
+    `🏍️ <b>${esc(name)}</b> (${esc(plate)} · <code>${esc(code)}</code>) is collecting your parcel from the seller.\nCheck their badge at the door: /verify ${esc(code)}` +
+    (cancelFee > 0 ? `\n⚠️ If you cancel now, ${cancelFee} FCFA (half the delivery fee) goes to the rider and is taken from your refund.` : ''),
+  bPickedUp: (name, phone) => `📦 <b>Parcel picked up!</b> ${esc(name)} is coming to you.${phone ? `\n📞 ${esc(phone)}` : ''}`,
+  bCancelledFee: (fee) => `✖️ Order cancelled. The rider had already accepted: ${fee} FCFA go to them (half the delivery fee), the rest of your payment is refunded to your Mobile Money.`,
   bAtAgency: (agency, waybill) => `🚌 Parcel dropped at <b>${esc(agency)}</b>. Waybill: <code>${esc(waybill)}</code>.`,
   bHub: (city) => `🏁 Your parcel arrived in <b>${esc(city)}</b>. A local rider will collect it.`,
-  bOut: (name) => `🛵 <b>${esc(name)}</b> is on the way to you with the parcel.`,
+  bOut: (name, phone) => `🛵 <b>${esc(name)}</b> is on the way to you with the parcel.${phone ? `\n📞 ${esc(phone)}` : ''}`,
   bNear: (name, meters) => `📍 <b>${esc(name)} is about ${meters} m away.</b> Get your code ready, and check the parcel before giving it.`,
   bDelivered: '🎉 <b>Delivery confirmed.</b> Thanks for buying with BayamSafe!',
   bDisputed: (reason) => `⚠️ A problem was reported (“${esc(reason)}”). Your money stays locked until our team decides.`,
   bRefunded: '↩️ Refund sent to the Mobile Money number that paid.',
   bCancelled: '✖️ Order cancelled by the seller.',
   btnWhere: '📍 Where is my rider?',
-  whereNone: (phone) => `The rider hasn’t shared their location recently. You can call them: ${esc(phone)}`,
+  whereNone: (phone) => `The rider hasn’t shared their location recently.${phone ? ` You can call them: ${esc(phone)}` : ' Try again in a few minutes.'}`,
   whereInfo: (name, mins, dist, eta) => `📍 ${esc(name)}’s position ${mins} min ago` + (dist !== undefined ? ` · ${dist} km from you (≈ ${eta} min)` : ''),
   whereNotYet: 'The parcel isn’t on its way to you yet. You’ll be told as soon as it leaves.',
 

@@ -217,6 +217,7 @@ td.r, th.r { text-align: right; }
       <a href="#sellers" data-view="sellers">Vendeurs</a>
       <a href="#money" data-view="money">Argent</a>
       <a href="#phones" data-view="phones">Numéros de paiement <span class="badge" id="navPhones" hidden></span></a>
+      <a href="#topups" data-view="topups">Retraits à vérifier <span class="badge alert" id="navTopups" hidden aria-label="retraits à vérifier"></span></a>
       <a href="#audit" data-view="audit">Journal</a>
     </nav>
     <div class="side-foot">
@@ -355,7 +356,7 @@ td.r, th.r { text-align: right; }
     } catch (err) { if (err.message !== 'forbidden') $('#loginErr').textContent = err.message; }
   };
 
-  const views = { overview, verify, orders, live, riders, sellers, money, phones, audit };
+  const views = { overview, verify, orders, live, riders, sellers, money, phones, topups, audit };
   let refreshTimer = null;
   function route() {
     const v = (location.hash || '#overview').slice(1);
@@ -381,7 +382,12 @@ td.r, th.r { text-align: right; }
     } catch {}
     try {
       const ph = await api('/payout-phones');
-      $('#navPhones').hidden = !ph.length; $('#navPhones').textContent = ph.length;
+      const pending = ph.filter((u) => !u.payoutPhoneEffectiveAt);
+      $('#navPhones').hidden = !pending.length; $('#navPhones').textContent = pending.length;
+    } catch {}
+    try {
+      const tu = await api('/topups?status=NEEDS_REVIEW');
+      $('#navTopups').hidden = !tu.length; $('#navTopups').textContent = tu.length;
     } catch {}
   }
   const page = (title, sub, ...actions) =>
@@ -732,7 +738,7 @@ td.r, th.r { text-align: right; }
       box.replaceChildren(h('div', { class: 'table-box' }, h('table', {},
         h('thead', {}, h('tr', {}, ['Boutique', 'Contact', 'Ville', 'Profil', 'Dû à la plateforme', 'Inscription en cours', 'Inscrit'].map((t, i) => h('th', { class: i === 4 ? 'r' : '', text: t })))),
         h('tbody', {}, rows.map((u) => h('tr', { onclick: () => openSeller(u.id) },
-          h('td', {}, h('b', { text: u.shopName }), u.kycStatus === 'VERIFIED' ? ' 🏅' : '', u.suspendedAt ? [' ', h('span', { class: 'pill bad', text: 'Suspendu' })] : null), h('td', {}, u.fullName, h('div', { class: 'sub mono', text: u.phone })),
+          h('td', {}, h('b', { text: u.shopName }), u.kycStatus === 'VERIFIED' ? ' 🏅' : '', u.suspendedAt ? [' ', h('span', { class: 'pill bad', text: 'Suspendu' })] : null, u.owedToPlatform > 10000 ? [' ', h('span', { class: 'pill bad', text: 'COD bloqué' })] : null), h('td', {}, u.fullName, h('div', { class: 'sub mono', text: u.phone })),
           h('td', { text: u.city || '—' }), h('td', {}, pill(u.kycStatus, PEOPLE)),
           h('td', { class: 'r num', style: u.owedToPlatform ? 'color:var(--laterite)' : '', text: u.owedToPlatform ? fcfa(u.owedToPlatform) : '—' }),
           h('td', { class: 'sub', text: u.signupInProgress ? `${u.signupInProgress.kind === 'rider' ? 'Livreur' : 'Vendeur'} · étape « ${u.signupInProgress.step} »` : '—' }),
@@ -758,11 +764,27 @@ td.r, th.r { text-align: right; }
           h('button', { class: 'btn small', type: 'button', style: 'margin-top:10px', onclick: () => sellerAct(`/users/${id}/unsuspend`, {}, 'Vendeur réactivé.', `Réactiver ${u.shopName} ?`), text: 'Réactiver' }))
       : h('div', { class: 'card' }, h('h3', { text: 'Suspension', style: 'font-size:16px;margin-bottom:8px' }), suspNote,
           h('button', { class: 'btn danger small', type: 'button', style: 'margin-top:10px', onclick: () => { const n = suspNote.value.trim(); if (!n) { suspNote.focus(); return toast('Indiquez le motif de suspension.'); } sellerAct(`/users/${id}/suspend`, { note: n }, 'Vendeur suspendu.', `Suspendre ${u.shopName} ? Il ne pourra plus créer de commandes.`); }, text: 'Suspendre' }));
+    const owed = Math.round(u.owedToPlatform || 0);
+    const woAmount = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: 1, max: owed, step: 1, value: owed, 'aria-label': 'Montant à effacer (FCFA)', style: 'max-width:200px' });
+    const woNote = h('input', { class: 'input', placeholder: 'Motif de l’effacement (obligatoire)', 'aria-label': 'Motif de l’effacement de la dette', style: 'max-width:420px' });
+    const writeOff = () => {
+      const amount = Number(woAmount.value); const n = woNote.value.trim();
+      if (!Number.isInteger(amount) || amount < 1 || amount > owed) { woAmount.focus(); return toast(`Le montant doit être entre 1 et ${fcfa(owed)}.`); }
+      if (!n) { woNote.focus(); return toast('Indiquez le motif (obligatoire).'); }
+      sellerAct(`/users/${id}/write-off`, { amount, note: n }, 'Dette effacée.', `Effacer ${fcfa(amount)} de dette pour ${u.shopName} ? Cette dette ne sera plus récupérée sur ses versements. L’action est inscrite au journal.`);
+    };
+    const writeOffBox = owed > 0
+      ? h('div', { class: 'card' }, h('h3', { text: 'Dette envers la plateforme', style: 'font-size:16px;margin-bottom:8px' }),
+          h('div', { class: 'sub', style: 'margin-bottom:8px', text: `Dû : ${fcfa(owed)}` }),
+          h('div', { class: 'toolbar', style: 'margin:0' }, woAmount, woNote,
+            h('button', { class: 'btn danger small', type: 'button', onclick: writeOff, text: 'Effacer la dette' })))
+      : null;
     const bg = h('div', { class: 'drawer-bg', onclick: close });
     const dr = h('aside', { class: 'drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': u.shopName },
       h('div', { class: 'vhead' }, h('div', {}, h('h2', { text: u.shopName }), h('div', { class: 'sub', text: `${u.fullName} · ${u.phone}` })), h('button', { class: 'btn small', type: 'button', onclick: close, text: 'Fermer' })),
-      h('div', { class: 'toolbar', style: 'margin:0' }, pill(u.kycStatus, PEOPLE), u.suspendedAt ? h('span', { class: 'pill bad', text: 'Suspendu' }) : null, u.owedToPlatform ? h('span', { class: 'pill wait', text: `Dû à la plateforme : ${fcfa(u.owedToPlatform)}` }) : null, u.kycNote ? h('span', { class: 'sub', text: 'Motif : ' + u.kycNote }) : null),
+      h('div', { class: 'toolbar', style: 'margin:0' }, pill(u.kycStatus, PEOPLE), u.suspendedAt ? h('span', { class: 'pill bad', text: 'Suspendu' }) : null, u.owedToPlatform ? h('span', { class: 'pill wait', text: `Dû à la plateforme : ${fcfa(u.owedToPlatform)}` }) : null, u.owedToPlatform > 10000 ? h('span', { class: 'pill bad', text: 'COD bloqué (dette > 10 000 FCFA)' }) : null, u.kycNote ? h('span', { class: 'sub', text: 'Motif : ' + u.kycNote }) : null),
       suspendBox,
+      writeOffBox,
       h('div', { class: 'thumbs' }, [['Selfie', u.selfieFileId], ['Recto', u.cniFrontFileId], ['Verso', u.cniBackFileId], ['Boutique', u.shopPhotoFileId]].map(([l, f]) => h('div', { class: 'thumb' }, f ? img(f, l) : h('div', { class: 'empty', style: 'padding:8px;font-size:11px', text: '—' }), h('span', { text: l })))),
       h('div', { class: 'facts' }, [['Ville', u.city], ['N° CNI', u.cniNumber], ['Envoyé', when(u.kycSubmittedAt)], ['Décidé', when(u.kycReviewedAt)]].map(([k, v]) => h('div', { class: 'fact' }, h('div', { class: 'k', text: k }), h('div', { class: 'v', text: v || '—' })))),
       u.shopLocation ? h('a', { class: 'btn small', href: `https://www.google.com/maps?q=${u.shopLocation.lat},${u.shopLocation.lng}`, target: '_blank', rel: 'noopener', text: 'Voir la boutique sur Google Maps' }) : null,
@@ -795,10 +817,10 @@ td.r, th.r { text-align: right; }
     const list = await api('/payout-phones');
     const decide = async (u, approve) => {
       const msg = approve
-        ? `Approuver le nouveau numéro de paiement de ${u.shopName || u.fullName} ? Numéro actuel : ${u.payoutPhone || u.phone || '—'} → nouveau numéro : ${u.pendingPayoutPhone}. Les prochains versements iront au nouveau numéro.`
+        ? `Approuver le nouveau numéro de paiement de ${u.shopName || u.fullName} ? Numéro actuel : ${u.payoutPhone || u.phone || '—'} → nouveau numéro : ${u.pendingPayoutPhone}. Le nouveau numéro sera actif 24 h après l’approbation ; pendant ce délai, les retraits sont suspendus et l’ancien numéro est prévenu.`
         : `Refuser le changement de numéro de ${u.shopName || u.fullName} ?`;
       if (!sure(msg)) return;
-      try { await api(`/users/${u.id}/payout-phone`, { method: 'POST', body: { approve } }); toast(approve ? 'Numéro approuvé.' : 'Changement refusé.'); phones(); refreshBadges(); }
+      try { await api(`/users/${u.id}/payout-phone`, { method: 'POST', body: { approve, expectedPhone: u.pendingPayoutPhone } }); toast(approve ? 'Numéro approuvé.' : 'Changement refusé.'); phones(); refreshBadges(); }
       catch (e) { toast(e.message); }
     };
     $('#main').replaceChildren(
@@ -808,10 +830,47 @@ td.r, th.r { text-align: right; }
         h('tbody', {}, list.map((u) => h('tr', { style: 'cursor:default' },
           h('td', {}, h('b', { text: u.shopName || u.fullName }), h('div', { class: 'sub', text: u.fullName || '' })),
           h('td', { class: 'mono', text: u.payoutPhone || u.phone || '—' }), h('td', { class: 'mono', text: u.pendingPayoutPhone }),
-          h('td', {}, h('div', { class: 'toolbar', style: 'margin:0' },
-            h('button', { class: 'btn primary small', type: 'button', onclick: () => decide(u, true), text: 'Approuver' }),
-            h('button', { class: 'btn danger small', type: 'button', onclick: () => decide(u, false), text: 'Refuser' }))))))
+          h('td', {}, u.payoutPhoneEffectiveAt
+            ? h('span', { class: 'pill ok', role: 'status', text: `Approuvé · actif le ${when(u.payoutPhoneEffectiveAt)}` })
+            : h('div', { class: 'toolbar', style: 'margin:0' },
+              h('button', { class: 'btn primary small', type: 'button', onclick: () => decide(u, true), text: 'Approuver' }),
+              h('button', { class: 'btn danger small', type: 'button', onclick: () => decide(u, false), text: 'Refuser' }))))))
       )) : h('div', { class: 'card empty', text: 'Aucune demande en attente.' })
+    );
+  }
+
+  // ------------------------------------------------------------------ withdrawals needing review
+  async function topups() {
+    const list = await api('/topups?status=NEEDS_REVIEW');
+    const resolve = async (t, action, ref, note, who) => {
+      const n = note.value.trim();
+      if (!n) { note.focus(); return toast('Indiquez une note (obligatoire).'); }
+      const amt = fcfa(t.amount);
+      const msg = action === 'MARK_SENT'
+        ? `Confirmer que ${who} a bien reçu ${amt} ? Le retrait sera marqué comme envoyé et aucune somme ne sera recréditée.`
+        : `Annuler ce retrait ? ${amt} seront recrédités sur la caution de ${who}.`;
+      if (!sure(msg)) return;
+      const body = { action, note: n };
+      if (action === 'MARK_SENT') body.reference = ref.value.trim();
+      try { await api(`/topups/${t.id}/resolve`, { method: 'POST', body }); toast(action === 'MARK_SENT' ? 'Retrait marqué comme envoyé.' : 'Retrait annulé, caution recréditée.'); topups(); refreshBadges(); }
+      catch (e) { toast(e.message); }
+    };
+    $('#main').replaceChildren(
+      page('Retraits à vérifier', 'Retraits de livreurs dont le résultat est incertain. Vérifiez chez l’opérateur Mobile Money avant de trancher.', h('button', { class: 'btn small', type: 'button', onclick: () => topups().catch((e) => toast(e.message)), text: 'Actualiser' })),
+      list.length ? h('div', {}, list.map((t) => {
+        const r = t.rider || {};
+        const who = r.fullName || r.name || 'le livreur';
+        const ref = h('input', { class: 'input', 'aria-label': `Référence de l’opérateur pour ${who} (facultatif)`, placeholder: 'Référence opérateur (facultatif)', style: 'max-width:260px' });
+        const note = h('input', { class: 'input', 'aria-label': `Note pour ${who} (obligatoire)`, placeholder: 'Note (obligatoire)', style: 'max-width:320px' });
+        return h('div', { class: 'card', style: 'margin-bottom:12px' },
+          h('div', { class: 'payout', style: 'border:0;padding:0 0 10px' },
+            h('div', {}, h('b', { text: who }), h('div', { class: 'sub mono', text: [r.code || r.riderCode, r.phone || t.phone].filter(Boolean).join(' · ') || '—' })),
+            h('div', { style: 'text-align:right' }, h('div', { class: 'num', style: 'font-size:18px;font-weight:600', text: fcfa(t.amount) }), h('div', { class: 'sub', text: when(t.createdAt || t.at) }))),
+          h('div', { class: 'sub mono', style: 'margin-bottom:10px', text: `Référence : ${t.reference || '—'}` }),
+          h('div', { class: 'toolbar', style: 'margin:0' }, ref, note,
+            h('button', { class: 'btn primary small', type: 'button', onclick: () => resolve(t, 'MARK_SENT', ref, note, who), text: 'Marquer envoyé' }),
+            h('button', { class: 'btn danger small', type: 'button', onclick: () => resolve(t, 'REVERSE', ref, note, who), text: 'Annuler et recréditer' })));
+      })) : h('div', { class: 'card empty', text: 'Aucun retrait à vérifier.' })
     );
   }
 

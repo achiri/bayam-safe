@@ -1,5 +1,5 @@
 import { VersionConflictError } from '../domain/errors.js';
-import { AuditEntry, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
+import { AuditEntry, TopupStatus, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
 import { assertBalanced, OldestFirstCursor, OrderQuery, Repo, Store } from './store.js';
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -191,6 +191,14 @@ class MemoryRepo implements Repo {
   async updateTopup(t: FloatTopup) {
     this.state.topups.set(t.id, clone(t));
   }
+  async listTopups(q: { statuses: TopupStatus[]; kind?: 'TOPUP' | 'WITHDRAWAL'; limit?: number }) {
+    return [...this.state.topups.values()]
+      .filter((t) => q.statuses.includes(t.status))
+      .filter((t) => !q.kind || (t.kind ?? 'TOPUP') === q.kind)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, q.limit ?? 200)
+      .map(clone);
+  }
 
   async putMedia(m: Media) {
     this.media.set(m.id, m);
@@ -286,6 +294,7 @@ export class MemoryStore implements Store {
   listJournals = (r: string) => this.repo.listJournals(r);
   getTopup = (id: string) => this.repo.getTopup(id);
   getTopupByRef = (r: string) => this.repo.getTopupByRef(r);
+  listTopups = (q: { statuses: TopupStatus[]; kind?: 'TOPUP' | 'WITHDRAWAL'; limit?: number }) => this.repo.listTopups(q);
   getMedia = (id: string) => this.repo.getMedia(id);
   countBuyerRefusals = (p: string, since: string) => this.repo.countBuyerRefusals(p, since);
   listAudit = (limit?: number) => this.repo.listAudit(limit);

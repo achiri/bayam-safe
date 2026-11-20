@@ -3,6 +3,8 @@ import { Order, PayoutKind } from './types.js';
 
 export const MAX_ORDER_TOTAL = 2_000_000; // FCFA, sane cap for an MVP; mobile money wallets cap lower anyway
 export const MIN_ITEM_PRICE = 100;
+/** A seller who owes the platform more than this (FCFA) can only create prepaid orders (policy 11). */
+export const SELLER_DEBT_COD_LIMIT = 10_000;
 
 export function assertAmount(name: string, value: number, { min = 0, max = MAX_ORDER_TOTAL } = {}): number {
   if (!Number.isSafeInteger(value)) throw invalid(`${name} must be a whole number of FCFA`);

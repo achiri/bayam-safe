@@ -339,7 +339,8 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       assert.equal(view.status, 'REFUNDED');
       assert.equal(view.can.cancel, false);
       const refunded = (await app.store.getOrder(a.order.id))!;
-      assert.deepEqual(refunded.payouts.map((p) => [p.kind, p.amount]), [['BUYER_REFUND', 21500]]);
+      // policy 9: a buyer cancelling after a rider accepted pays the rider half the delivery fee, out of the refund
+      assert.deepEqual(refunded.payouts.map((p) => [p.kind, p.amount]), [['BUYER_REFUND', 20750], ['FIRST_MILE_RIDER', 750]]);
       assert.match(refunded.history.at(-1)!.note!, /cancelled by buyer/);
       await rejects(app.orders.buyerCancel(a.order.id, 'wrong-token'), 'NOT_FOUND');
 
@@ -496,7 +497,13 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       assert.equal((await app.orders.buyerView(order.id, buyerToken, sessionToken)).rider, undefined);
       await app.orders.claim(rider.telegramId, order.id);
       const view = await app.orders.buyerView(order.id, buyerToken, sessionToken);
-      assert.deepEqual(view.rider, { firstName: 'Test', plateNumber: 'LT-123-AB', riderCode: rider.riderCode, vehicleType: 'MOTO', hasPhoto: true, phone: rider.phone });
+      // policy 12: no phone number until the parcel is on its way
+      assert.deepEqual(view.rider, { firstName: 'Test', plateNumber: 'LT-123-AB', riderCode: rider.riderCode, vehicleType: 'MOTO', hasPhoto: true, phone: undefined });
+      assert.equal(view.cancelFee, 750);
+      await app.orders.confirmPickup(rider.telegramId, order.id);
+      const onTheWay = await app.orders.buyerView(order.id, buyerToken, sessionToken);
+      assert.equal(onTheWay.rider?.phone, rider.phone);
+      assert.equal((await app.orders.buyerView(order.id, buyerToken, 'other-device')).rider?.phone, undefined);
       assert.equal(await app.orders.riderPhotoFileId(order.id, buyerToken), 'selfie-file-id-0001');
       await rejects(app.orders.riderPhotoFileId(order.id, 'nope'), 'NOT_FOUND');
     });
@@ -805,7 +812,9 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       assert.equal((await getRider(app, rider.id)).floatReserved, 20000); // still held until the parcel is back
       const back = await app.orders.sellerConfirmReturn(a.order.id, merchant.id);
       assert.equal(back.status, 'REFUNDED');
-      assert.deepEqual(back.payouts, []);
+      // policy 10: the rider ran the leg, so they get the delivery fee, charged to the seller
+      assert.deepEqual(back.payouts.map((p) => [p.kind, p.amount]), [['FIRST_MILE_RIDER', 1500]]);
+      assert.equal((await getUser(app, merchant.id)).owedToPlatform, 1500);
       const r = await getRider(app, rider.id);
       assert.deepEqual([r.floatReserved, r.floatBalance], [0, 100000]);
       assert.equal(await app.orders.buyerPrepaidOnly(phone), false);
@@ -898,12 +907,12 @@ export function orderFlowSuite(name: string, makeStore: () => Promise<Store>) {
       const merchant = await makeMerchant(app);
       const rider = await makeRider(app);
 
-      // buyer cancelling at the same stage costs nobody anything
+      // buyer cancelling at the same stage costs the seller nothing (the rider's half fee comes out of the buyer's refund)
       const b = await paidOrder(app, merchant);
       await app.orders.claim(rider.telegramId, b.order.id);
       await app.orders.buyerCancel(b.order.id, b.buyerToken, b.sessionToken);
       assert.ok(!(await getUser(app, merchant.id)).owedToPlatform);
-      assert.deepEqual(kp(await getOrder(app, b.order.id)), [['BUYER_REFUND', 21500]]);
+      assert.deepEqual(kp(await getOrder(app, b.order.id)), [['BUYER_REFUND', 20750], ['FIRST_MILE_RIDER', 750]]);
 
       // seller cancelling before any rider accepted: also free
       const early = await paidOrder(app, merchant);

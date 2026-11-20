@@ -143,6 +143,9 @@ The server runs these on a timer (single instance):
 | Re-offer jobs nobody accepted | 10 min |
 | Timeouts (no-rider reminders and 48 h refund, 45 min rider no-show, 24 h agency reminder) | 5 min |
 | Payment sync (re-check pending payments from the last 30 min) | 2 min |
+| Withdrawal sweeper (re-check pending rider withdrawals; flag stuck ones for review) | 5 min |
+| Activate approved payout-number changes after 24 h | 10 min |
+| Purge abandoned bot sessions older than 7 days | daily |
 
 ### Deploying
 

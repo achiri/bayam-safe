@@ -2,6 +2,7 @@ import { AppError, forbidden, invalid, notFound } from '../domain/errors.js';
 import { assertGeoPoint } from '../domain/geo.js';
 import { normalizeCameroonPhone } from '../domain/phone.js';
 import { newId } from '../domain/secrets.js';
+import { conflict } from '../domain/errors.js';
 import { GeoPoint, Lang, OnboardingDraft, User } from '../domain/types.js';
 
 export interface MerchantProfileInput {
@@ -32,6 +33,11 @@ export interface TelegramContact {
 }
 
 const clean = (s: string, max: number) => s.replace(/\s+/g, ' ').trim().slice(0, max);
+
+/** An approved payout-number change only takes effect this long after approval (policy 8). */
+export const PAYOUT_PHONE_DELAY_MS = 24 * 3600_000;
+/** Withdrawals stay paused this long after the new number became active. */
+export const PAYOUT_CHANGE_HOLD_MS = 24 * 3600_000;
 
 export class UserService {
   constructor(
@@ -204,27 +210,97 @@ export class UserService {
     const normalized = normalizeCameroonPhone(phone);
     if (normalized === (u.payoutPhone ?? u.phone)) throw invalid('Ce numéro est déjà votre numéro de paiement.');
     u.pendingPayoutPhone = normalized;
+    u.payoutPhoneEffectiveAt = undefined; // a new request must be approved again
     u.updatedAt = new Date().toISOString();
     const saved = await this.store.updateUser(u);
     this.events.emit({ type: 'payout_phone.requested', user: saved });
     return saved;
   }
 
-  async decidePayoutPhone(userId: string, approve: boolean): Promise<User> {
+  /**
+   * Approving does not switch the number: it is scheduled for 24 h later, the user is told on Telegram,
+   * and withdrawals pause meanwhile (see activatePayoutPhoneIfDue). Until then payouts use the old number.
+   */
+  async decidePayoutPhone(userId: string, approve: boolean, now = new Date(), expectedPhone?: string): Promise<User> {
     const u = await this.store.getUser(userId);
     if (!u) throw notFound('User');
     if (!u.pendingPayoutPhone) throw invalid('Aucun changement de numéro en attente.');
-    const pending = u.pendingPayoutPhone;
+    // The admin must be deciding on the number they actually saw (the user may have re-requested meanwhile).
+    if (expectedPhone !== undefined && expectedPhone !== u.pendingPayoutPhone) throw conflict('Le numéro demandé a changé entre-temps : rechargez la liste.');
+    if (approve && u.payoutPhoneEffectiveAt) throw invalid('Ce changement est déjà approuvé : il sera actif à l’heure prévue.');
     if (approve) {
-      u.payoutPhone = pending;
-      const rider = await this.store.getRiderByTelegram(u.telegramId);
-      if (rider) await this.store.updateRider({ ...rider, phone: pending, updatedAt: new Date().toISOString() });
+      u.payoutPhoneEffectiveAt = new Date(now.getTime() + PAYOUT_PHONE_DELAY_MS).toISOString();
+    } else {
+      u.pendingPayoutPhone = undefined;
+      u.payoutPhoneEffectiveAt = undefined;
     }
-    u.pendingPayoutPhone = undefined;
-    u.updatedAt = new Date().toISOString();
+    u.updatedAt = now.toISOString();
     const saved = await this.store.updateUser(u);
     this.events.emit({ type: 'payout_phone.decided', user: saved, approved: approve });
     return saved;
+  }
+
+  /** Applies an approved number change once its 24 h have passed. Returns the user if it was applied. */
+  async activatePayoutPhoneIfDue(userId: string, now = new Date()): Promise<User | undefined> {
+    const u0 = await this.store.getUser(userId);
+    if (!u0?.pendingPayoutPhone || !u0.payoutPhoneEffectiveAt || Date.parse(u0.payoutPhoneEffectiveAt) > now.getTime()) return undefined;
+    const at = now.toISOString();
+    const saved = await this.store.tx(async (repo) => {
+      const u = await repo.getUser(userId);
+      if (!u?.pendingPayoutPhone || !u.payoutPhoneEffectiveAt || Date.parse(u.payoutPhoneEffectiveAt) > now.getTime()) return undefined;
+      const rider = await repo.getRiderByTelegram(u.telegramId);
+      if (rider) await repo.updateRider({ ...rider, phone: u.pendingPayoutPhone, updatedAt: at });
+      u.payoutPhone = u.pendingPayoutPhone;
+      u.pendingPayoutPhone = undefined;
+      u.payoutPhoneEffectiveAt = undefined;
+      u.payoutPhoneChangedAt = at;
+      u.updatedAt = at;
+      return repo.updateUser(u);
+    });
+    if (saved) this.events.emit({ type: 'payout_phone.activated', user: saved });
+    return saved;
+  }
+
+  /** Background job: activates every approved change that is due. */
+  async activateDuePayoutPhones(now = new Date()): Promise<number> {
+    const due = (await this.listPendingPayoutPhones()).filter((u) => u.payoutPhoneEffectiveAt && Date.parse(u.payoutPhoneEffectiveAt) <= now.getTime());
+    let n = 0;
+    for (const u of due) {
+      if (await this.activatePayoutPhoneIfDue(u.id, now).catch(() => undefined)) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Admin write-off of what a seller owes the platform (policy 11). Booked as a balanced journal
+   * (receivable up, write-off expense) in the same transaction as the lower balance; the journal
+   * key includes the user's version, so a replay of the same call cannot book it twice.
+   */
+  async writeOffDebt(userId: string, amountInput: number, noteInput: string): Promise<User> {
+    const note = clean(String(noteInput ?? ''), 500);
+    if (note.length < 3) throw invalid('Une note est obligatoire pour effacer une dette.');
+    return this.store.tx(async (repo) => {
+      const u = await repo.getUser(userId);
+      if (!u) throw notFound('User');
+      const owed = u.owedToPlatform ?? 0;
+      if (!Number.isSafeInteger(amountInput) || amountInput < 1 || amountInput > owed) {
+        throw invalid(`Le montant doit être un entier entre 1 et ${owed} FCFA (dette actuelle).`);
+      }
+      const now = new Date().toISOString();
+      const added = await repo.addJournal({
+        key: `debt-writeoff:${u.id}:v${u.version}`,
+        description: `Debt write-off ${amountInput} FCFA for ${u.shopName}: ${note}`,
+        createdAt: now,
+        lines: [
+          { account: 'MERCHANT_RECEIVABLE', refId: u.id, amount: amountInput },
+          { account: 'PLATFORM_WRITE_OFF', refId: u.id, amount: -amountInput }
+        ]
+      });
+      if (!added) throw conflict('Cette annulation de dette a déjà été enregistrée.');
+      u.owedToPlatform = owed - amountInput;
+      u.updatedAt = now;
+      return repo.updateUser(u);
+    });
   }
 
   async listPendingPayoutPhones(): Promise<User[]> {

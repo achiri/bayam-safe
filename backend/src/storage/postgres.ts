@@ -1,6 +1,6 @@
 import pg from 'pg';
 import { VersionConflictError } from '../domain/errors.js';
-import { AuditEntry, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
+import { AuditEntry, TopupStatus, FloatTopup, Journal, LedgerAccount, Media, Order, OrderStatus, Rider, RiderStatus, User } from '../domain/types.js';
 import { SCHEMA_SQL } from './schema.js';
 import { assertBalanced, OldestFirstCursor, OrderQuery, Repo, Store } from './store.js';
 
@@ -255,6 +255,15 @@ class PgRepo implements Repo {
     await this.sql.query('UPDATE float_topups SET reference=$2, status=$3, data=$4::jsonb WHERE id=$1', [
       t.id, t.reference ?? null, t.status, json(t)
     ]);
+  }
+
+  listTopups(q: { statuses: TopupStatus[]; kind?: 'TOPUP' | 'WITHDRAWAL'; limit?: number }) {
+    return this.many<FloatTopup>(
+      `SELECT data FROM float_topups
+       WHERE status = ANY($1::text[]) AND ($2::text IS NULL OR COALESCE(data->>'kind', 'TOPUP') = $2)
+       ORDER BY data->>'createdAt', id LIMIT $3`,
+      [q.statuses, q.kind ?? null, Math.min(q.limit ?? 200, 1000)]
+    );
   }
 
   // ---- media
