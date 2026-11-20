@@ -8,12 +8,22 @@ import { GeoPoint, Lang, OnboardingDraft, User } from '../domain/types.js';
 export interface MerchantProfileInput {
   shopName?: string;
   city?: string;
+  shopAddress?: string;
   cniNumber?: string;
   selfieFileId?: string;
   cniFrontFileId?: string;
   cniBackFileId?: string;
   shopPhotoFileId?: string;
   shopLocation?: GeoPoint;
+}
+
+export interface UpdateProfilePatch {
+  shopName?: string;
+  city?: string;
+  shopAddress?: string;
+  shopLocation?: GeoPoint;
+  shopPhotoFileId?: string;
+  lang?: Lang;
 }
 
 /** Cameroon CNI numbers are digits; passports and receipts mix letters. Accept 6-20 alphanumerics. */
@@ -85,7 +95,7 @@ export class UserService {
     return user;
   }
 
-  async updateProfile(telegramId: number, patch: { shopName?: string; city?: string; lang?: Lang }): Promise<User> {
+  async updateProfile(telegramId: number, patch: UpdateProfilePatch): Promise<User> {
     const u = await this.require(telegramId);
     if (patch.shopName !== undefined) {
       const s = clean(patch.shopName, 60);
@@ -93,6 +103,9 @@ export class UserService {
       u.shopName = s;
     }
     if (patch.city !== undefined) u.city = clean(patch.city, 40);
+    if (patch.shopAddress !== undefined) u.shopAddress = clean(patch.shopAddress, 120);
+    if (patch.shopLocation !== undefined) u.shopLocation = assertGeoPoint(patch.shopLocation);
+    if (patch.shopPhotoFileId !== undefined) u.shopPhotoFileId = patch.shopPhotoFileId;
     if (patch.lang) u.lang = patch.lang;
     u.updatedAt = new Date().toISOString();
     return this.store.updateUser(u);

@@ -108,7 +108,39 @@ const fr = {
     `⚠️ Vous devez ${formatFcfa(owed, 'fr')} à BayamSafe (plafond ${formatFcfa(limit, 'fr')}). Tant que cette dette n’est pas remboursée, seules les commandes payées à l’avance (séquestre) sont possibles. Elle se rembourse toute seule sur vos prochaines ventes.`,
 
   helpExtra:
-    '\n\n<b>Paiements</b>\n/payout 6XXXXXXXX — changer mon numéro de paiement\n/earnings — mes gains (livreurs)\n/retrait 5000 — retirer ma caution libre (livreurs)'
+    '\n\n<b>Paiements</b>\n/payout 6XXXXXXXX — changer mon numéro de paiement\n/earnings — mes gains (livreurs)\n/retrait 5000 — retirer ma caution libre (livreurs)',
+
+  // shop profile & editing
+  sellerProfileCard: (p: { shop: string; city?: string; address?: string; location?: string; status: string; note?: string }) =>
+    `🏪 <b>Mon profil boutique</b>\n\n` +
+    `Boutique : <b>${esc(p.shop)}</b>\n` +
+    `Ville : <b>${esc(p.city ?? 'Non définie')}</b>\n` +
+    `Adresse / Repère : <b>${esc(p.address ?? 'Non défini')}</b>\n` +
+    `Position GPS : ${p.location ? `<code>${esc(p.location)}</code>` : '<i>Non définie</i>'}\n` +
+    `Statut : ${p.status}${p.note ? `\nMotif : ${esc(p.note)}` : ''}`,
+  btnEditLocation: '📍 Position GPS',
+  btnEditAddress: '🏢 Adresse / Repère',
+  btnEditShopName: '🏷️ Nom boutique',
+  btnEditCity: '🏙️ Ville',
+  btnEditShopPhoto: '📸 Photo boutique',
+  btnBackToMenu: '🏠 Menu principal',
+  askEditLocation:
+    '📍 <b>Modifier la position GPS de votre boutique</b>\n\n' +
+    'Appuyez sur le bouton ci-dessous pour envoyer votre position GPS en 1 clic,\n' +
+    'ou collez des coordonnées (ex : <code>4.0511, 9.7085</code>) ou un lien Google Maps :',
+  askEditAddress:
+    '🏢 <b>Modifier l’adresse / repère de votre boutique</b>\n\n' +
+    'Entrez les indications pour que les livreurs trouvent votre boutique (ex : <i>Marché Akwa, Rue Pau, face pharmacie du peuple</i>) :',
+  askEditShopName: '🏷️ <b>Modifier le nom de votre boutique</b>\n\nEntrez le nouveau nom (min 2 caractères) :',
+  askEditCity: '🏙️ <b>Modifier la ville de votre boutique</b>\n\nChoisissez ou entrez votre ville :',
+  askEditShopPhoto: '📸 <b>Modifier la photo de votre boutique</b>\n\nEnvoyez une photo de la devanture de votre magasin :',
+  shopLocationUpdated: '✅ <b>Position GPS de la boutique mise à jour !</b>\nLes livreurs utiliseront ces coordonnées pour venir chercher vos colis.',
+  shopAddressUpdated: '✅ <b>Adresse / repère de la boutique mis à jour !</b>',
+  shopNameUpdated: '✅ <b>Nom de la boutique mis à jour !</b>',
+  shopCityUpdated: '✅ <b>Ville de la boutique mise à jour !</b>',
+  shopPhotoUpdated: '✅ <b>Photo de la boutique enregistrée !</b>',
+  shopNameTooShort: 'Le nom de la boutique est trop court (min 2 caractères).',
+  invalidCoordinates: 'Coordonnées non reconnues. Envoyez votre position via Telegram ou collez <code>4.0511, 9.7085</code>.'
 };
 
 type Strings = typeof fr;
@@ -209,7 +241,39 @@ const en: Strings = {
     `⚠️ You owe BayamSafe ${formatFcfa(owed, 'en')} (limit ${formatFcfa(limit, 'en')}). Until it is paid back, only prepaid (escrow) orders are possible. It is repaid automatically from your next sales.`,
 
   helpExtra:
-    '\n\n<b>Payments</b>\n/payout 6XXXXXXXX — change my payout number\n/earnings — my earnings (riders)\n/retrait 5000 — withdraw free float (riders)'
+    '\n\n<b>Payments</b>\n/payout 6XXXXXXXX — change my payout number\n/earnings — my earnings (riders)\n/retrait 5000 — withdraw free float (riders)',
+
+  // shop profile & editing
+  sellerProfileCard: (p: { shop: string; city?: string; address?: string; location?: string; status: string; note?: string }) =>
+    `🏪 <b>My shop profile</b>\n\n` +
+    `Shop name: <b>${esc(p.shop)}</b>\n` +
+    `City: <b>${esc(p.city ?? 'Not set')}</b>\n` +
+    `Address / Landmark: <b>${esc(p.address ?? 'Not set')}</b>\n` +
+    `GPS Location: ${p.location ? `<code>${esc(p.location)}</code>` : '<i>Not set</i>'}\n` +
+    `Status: ${p.status}${p.note ? `\nReason: ${esc(p.note)}` : ''}`,
+  btnEditLocation: '📍 GPS Location',
+  btnEditAddress: '🏢 Address / Landmark',
+  btnEditShopName: '🏷️ Shop name',
+  btnEditCity: '🏙️ City',
+  btnEditShopPhoto: '📸 Shop photo',
+  btnBackToMenu: '🏠 Main menu',
+  askEditLocation:
+    '📍 <b>Change your shop GPS location</b>\n\n' +
+    'Tap the button below to send your GPS position in 1 click,\n' +
+    'or paste coordinates (e.g. <code>4.0511, 9.7085</code>) or a Google Maps link:',
+  askEditAddress:
+    '🏢 <b>Change shop address / landmark</b>\n\n' +
+    'Enter directions so riders can find your shop easily (e.g. <i>Akwa Market, Rue Pau, opposite People\'s Pharmacy</i>):',
+  askEditShopName: '🏷️ <b>Change shop name</b>\n\nEnter the new name (min 2 characters):',
+  askEditCity: '🏙️ <b>Change shop city</b>\n\nChoose or type your city:',
+  askEditShopPhoto: '📸 <b>Change shop photo</b>\n\nSend a photo of your shop front:',
+  shopLocationUpdated: '✅ <b>Shop GPS location updated!</b>\nRiders will use these coordinates to collect your parcels.',
+  shopAddressUpdated: '✅ <b>Shop address / landmark updated!</b>',
+  shopNameUpdated: '✅ <b>Shop name updated!</b>',
+  shopCityUpdated: '✅ <b>Shop city updated!</b>',
+  shopPhotoUpdated: '✅ <b>Shop photo saved!</b>',
+  shopNameTooShort: 'Shop name too short (min 2 characters).',
+  invalidCoordinates: 'Coordinates not recognised. Send your location via Telegram or paste <code>4.0511, 9.7085</code>.'
 };
 
 export function x(lang: Lang = 'fr'): Strings {

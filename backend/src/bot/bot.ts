@@ -2,7 +2,7 @@ import { Bot, BotConfig, Context, InlineKeyboard, InputFile, Keyboard, SessionFl
 import { App } from '../app.js';
 import { AGENCIES, CITIES, getAgency } from '../domain/agencies.js';
 import { AppError } from '../domain/errors.js';
-import { googleMapsRoute } from '../domain/geo.js';
+import { OutsideCameroonError, assertGeoPoint, googleMapsRoute, parseCoordinates } from '../domain/geo.js';
 import { SELLER_DEBT_COD_LIMIT } from '../domain/money.js';
 import { isValidContactPhone, normalizeContactPhone } from '../domain/phone.js';
 import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../domain/types.js';
@@ -43,6 +43,7 @@ type Flow =
   | { kind: 'pickupPhoto'; orderId: string }
   | { kind: 'deliveryPhoto'; orderId: string }
   | { kind: 'edit'; orderId: string; field: 'itemTitle' | 'itemPrice' | 'deliveryFee' | 'buyerPhone' }
+  | { kind: 'editShop'; field: 'shopName' | 'city' | 'shopLocation' | 'shopAddress' | 'shopPhoto' }
   | { kind: 'code'; orderId: string }
   | { kind: 'problem'; orderId: string };
 
@@ -374,19 +375,87 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     const u = await requireUser(ctx);
     if (!u) return;
     const kb = new InlineKeyboard();
-    if (u.kycStatus === 'NONE' || u.kycStatus === 'REJECTED') kb.text(ctx.s.btnCompleteProfile, 'menu:profile_start');
-    await html(ctx, ctx.s.profileStatus(u.kycStatus, u.kycNote), { reply_markup: kb });
+    if (u.kycStatus === 'NONE' || u.kycStatus === 'REJECTED') {
+      kb.text(ctx.s.btnCompleteProfile, 'menu:profile_start').row();
+    }
+    const z = x(ctx.lang);
+    kb.text(z.btnEditLocation, 'shop:edit:location')
+      .text(z.btnEditAddress, 'shop:edit:address').row()
+      .text(z.btnEditShopName, 'shop:edit:name')
+      .text(z.btnEditCity, 'shop:edit:city').row()
+      .text(z.btnEditShopPhoto, 'shop:edit:photo').row()
+      .text(z.btnBackToMenu, 'menu:home');
+
+    const statusText = ctx.s.profileStatus(u.kycStatus, u.kycNote);
+    const locText = u.shopLocation ? `${u.shopLocation.lat.toFixed(5)}, ${u.shopLocation.lng.toFixed(5)}` : undefined;
+    await html(
+      ctx,
+      z.sellerProfileCard({
+        shop: u.shopName,
+        city: u.city,
+        address: u.shopAddress,
+        location: locText,
+        status: statusText,
+        note: u.kycNote
+      }),
+      { reply_markup: kb }
+    );
   };
-  bot.command(['profile', 'kyc'], guard(showProfile));
+  bot.command(['profile', 'kyc', 'shop', 'boutique', 'magasin'], guard(showProfile));
   bot.callbackQuery('menu:kyc', guard(async (ctx) => {
     await ctx.answerCallbackQuery();
     await showProfile(ctx);
+  }));
+  bot.callbackQuery('menu:home', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showMenu(ctx);
   }));
   bot.callbackQuery('menu:profile_start', guard(async (ctx) => {
     await ctx.answerCallbackQuery();
     if (!(await requireUser(ctx))) return;
     if (ctx.user!.draft?.kind === 'merchant') return onboarding.ask(ctx, ctx.user!, true);
     await onboarding.start(ctx, 'merchant');
+  }));
+
+  bot.callbackQuery('shop:edit:location', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    ctx.session.flow = { kind: 'editShop', field: 'shopLocation' };
+    const kb = new Keyboard().requestLocation(ctx.s.btnSendLocation).resized().oneTime();
+    await html(ctx, x(ctx.lang).askEditLocation, { reply_markup: kb });
+  }));
+
+  bot.callbackQuery('shop:edit:address', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    ctx.session.flow = { kind: 'editShop', field: 'shopAddress' };
+    await html(ctx, x(ctx.lang).askEditAddress, { reply_markup: { remove_keyboard: true } });
+  }));
+
+  bot.callbackQuery('shop:edit:name', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    ctx.session.flow = { kind: 'editShop', field: 'shopName' };
+    await html(ctx, x(ctx.lang).askEditShopName, { reply_markup: { remove_keyboard: true } });
+  }));
+
+  bot.callbackQuery('shop:edit:city', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    ctx.session.flow = { kind: 'editShop', field: 'city' };
+    const kb = new Keyboard();
+    CITIES.forEach((c, i) => {
+      kb.text(c);
+      if (i % 2 === 1) kb.row();
+    });
+    await html(ctx, x(ctx.lang).askEditCity, { reply_markup: kb.resized().oneTime() });
+  }));
+
+  bot.callbackQuery('shop:edit:photo', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    if (!(await requireUser(ctx))) return;
+    ctx.session.flow = { kind: 'editShop', field: 'shopPhoto' };
+    await html(ctx, x(ctx.lang).askEditShopPhoto, { reply_markup: { remove_keyboard: true } });
   }));
 
   async function riderMenu(ctx: BotContext) {
@@ -610,7 +679,8 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await ctx.answerCallbackQuery();
     const f = ctx.session.flow;
     if (f?.kind !== 'order' || f.step !== 'pickup' || !ctx.user?.shopLocation) return;
-    f.d.pickup = `${ctx.user.shopName}, ${ctx.user.city}`;
+    const addr = [ctx.user.shopName, ctx.user.shopAddress, ctx.user.city].filter(Boolean).join(', ');
+    f.d.pickup = addr;
     f.d.pickupLocation = ctx.user.shopLocation;
     await html(ctx, x(ctx.lang).shopPickupSet);
     await afterPickup(ctx, f.d);
@@ -795,6 +865,20 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     if (!loc || !ctx.from) return;
     if (ctx.message && (await onboarding.handleLocation(ctx, { lat: loc.latitude, lng: loc.longitude }))) return;
     const f = ctx.session.flow;
+    if (f?.kind === 'editShop' && f.field === 'shopLocation') {
+      try {
+        const point = assertGeoPoint({ lat: loc.latitude, lng: loc.longitude });
+        ctx.user = await users.updateProfile(ctx.from.id, { shopLocation: point });
+        ctx.session.flow = undefined;
+        await html(ctx, x(ctx.lang).shopLocationUpdated, { reply_markup: { remove_keyboard: true } });
+        await showProfile(ctx);
+        return;
+      } catch (e) {
+        const p = e instanceof OutsideCameroonError ? e.point : { lat: loc.latitude, lng: loc.longitude };
+        await html(ctx, ctx.s.badLocation(p.lat, p.lng));
+        return;
+      }
+    }
     if (f?.kind === 'order' && f.step === 'pickup') {
       f.d.pickupLocation = { lat: loc.latitude, lng: loc.longitude };
       await html(ctx, ctx.s.pickupLocationSaved);
@@ -1080,6 +1164,13 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       await html(ctx, x(ctx.lang).deliveryPhotoSaved);
       return;
     }
+    if (f?.kind === 'editShop' && f.field === 'shopPhoto') {
+      ctx.user = await users.updateProfile(ctx.from!.id, { shopPhotoFileId: fileId });
+      ctx.session.flow = undefined;
+      await html(ctx, x(ctx.lang).shopPhotoUpdated);
+      await showProfile(ctx);
+      return;
+    }
     await onboarding.handlePhoto(ctx, fileId);
   };
   bot.on('message:photo', guard((ctx) => onPhoto(ctx, ctx.message.photo.at(-1)!.file_id)));
@@ -1190,6 +1281,44 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       case 'deliveryPhoto':
         ctx.session.flow = undefined;
         return;
+      case 'editShop': {
+        const u = await requireUser(ctx);
+        if (!u) return;
+        if (f.field === 'shopName') {
+          if (text.length < 2) return html(ctx, x(ctx.lang).shopNameTooShort);
+          ctx.user = await users.updateProfile(ctx.from.id, { shopName: text });
+          ctx.session.flow = undefined;
+          await html(ctx, x(ctx.lang).shopNameUpdated);
+          return showProfile(ctx);
+        }
+        if (f.field === 'shopAddress') {
+          ctx.user = await users.updateProfile(ctx.from.id, { shopAddress: text });
+          ctx.session.flow = undefined;
+          await html(ctx, x(ctx.lang).shopAddressUpdated);
+          return showProfile(ctx);
+        }
+        if (f.field === 'city') {
+          ctx.user = await users.updateProfile(ctx.from.id, { city: text });
+          ctx.session.flow = undefined;
+          await html(ctx, x(ctx.lang).shopCityUpdated, { reply_markup: { remove_keyboard: true } });
+          return showProfile(ctx);
+        }
+        if (f.field === 'shopLocation') {
+          const parsed = parseCoordinates(text);
+          if (!parsed) return html(ctx, x(ctx.lang).invalidCoordinates);
+          try {
+            const point = assertGeoPoint(parsed);
+            ctx.user = await users.updateProfile(ctx.from.id, { shopLocation: point });
+            ctx.session.flow = undefined;
+            await html(ctx, x(ctx.lang).shopLocationUpdated, { reply_markup: { remove_keyboard: true } });
+            return showProfile(ctx);
+          } catch (e) {
+            const p = e instanceof OutsideCameroonError ? e.point : parsed;
+            return html(ctx, ctx.s.badLocation(p.lat, p.lng));
+          }
+        }
+        return;
+      }
       case 'edit': {
         const u = await requireUser(ctx);
         if (!u) return;

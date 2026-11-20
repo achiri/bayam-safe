@@ -411,4 +411,64 @@ describe('telegram bot', () => {
     assert.ok(card);
     assert.equal(card!.payload.reply_markup.inline_keyboard[0][0].callback_data, `r:pickup:${order.id}`);
   });
+
+  it('merchant can view and edit shop location, address, city, and name', async () => {
+    const h = harness();
+    const merchant = await makeMerchant(h.app, { kycStatus: 'VERIFIED', shopName: 'Boutique Ancienne', city: 'Douala', shopLocation: { lat: 4.0511, lng: 9.7085 } });
+    const M = merchant.telegramId;
+
+    // View shop profile via /shop
+    await h.text(M, '/shop');
+    assert.match(h.lastText(), /Mon profil boutique/);
+    assert.match(h.lastText(), /Boutique Ancienne/);
+    assert.match(h.lastText(), /4\.05110, 9\.70850/);
+
+    // Edit shop name
+    await h.press(M, 'shop:edit:name');
+    assert.match(h.lastText(), /Modifier le nom/);
+    await h.text(M, 'Boutique Nouvelle Akwa');
+    assert.match(h.lastText(), /Boutique Nouvelle Akwa/);
+    let updated = await h.app.users.require(M);
+    assert.equal(updated.shopName, 'Boutique Nouvelle Akwa');
+
+    // Edit shop address / landmark
+    await h.press(M, 'shop:edit:address');
+    assert.match(h.lastText(), /Modifier l’adresse/);
+    await h.text(M, 'Marché Akwa, Rue Pau, Boutique #14');
+    assert.match(h.lastText(), /Marché Akwa, Rue Pau, Boutique #14/);
+    updated = await h.app.users.require(M);
+    assert.equal(updated.shopAddress, 'Marché Akwa, Rue Pau, Boutique #14');
+
+    // Edit shop city
+    await h.press(M, 'shop:edit:city');
+    assert.match(h.lastText(), /Modifier la ville/);
+    await h.text(M, 'Yaoundé');
+    assert.match(h.lastText(), /Yaoundé/);
+    updated = await h.app.users.require(M);
+    assert.equal(updated.city, 'Yaoundé');
+
+    // Edit shop GPS location via location message
+    await h.press(M, 'shop:edit:location');
+    assert.match(h.lastText(), /Modifier la position GPS/);
+    await h.location(M, 3.8480, 11.5021); // Yaoundé coordinates
+    assert.match(h.lastText(), /3\.84800, 11\.50210/);
+    updated = await h.app.users.require(M);
+    assert.deepEqual(updated.shopLocation, { lat: 3.848, lng: 11.5021 });
+
+    // Also test updating GPS via typed coordinates text
+    await h.press(M, 'shop:edit:location');
+    await h.text(M, '4.0200, 9.7000');
+    assert.match(h.lastText(), /4\.02000, 9\.70000/);
+    updated = await h.app.users.require(M);
+    assert.deepEqual(updated.shopLocation, { lat: 4.02, lng: 9.7 });
+
+    // When creating an order with ord:pickup_shop, the new shop name, address and GPS are used
+    await h.press(M, 'menu:new_intra');
+    await h.text(M, 'Robe de soirée');
+    await h.text(M, '15000');
+    await h.text(M, '1500');
+    await h.text(M, '699112233');
+    await h.press(M, 'ord:pickup_shop');
+    assert.match(h.lastText(), /Comment le client paie-t-il/);
+  });
 });

@@ -49,6 +49,7 @@ export interface User {
   cniBackFileId?: string;
   shopPhotoFileId?: string;
   shopLocation?: GeoPoint;
+  shopAddress?: string;
   kycSubmittedAt?: string;
   kycReviewedAt?: string;
   /** Reason shown to the seller when verification is refused. */
