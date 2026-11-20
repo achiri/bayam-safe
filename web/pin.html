@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="referrer" content="no-referrer">
+  <title>BayamSafe · Code PIN Sécurisé</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(145deg, #064e3b 0%, #022c22 100%);
+      --card-bg: rgba(6, 78, 59, 0.7);
+      --card-border: rgba(212, 175, 55, 0.3);
+      --primary-gold: #f59e0b;
+      --primary-emerald: #10b981;
+      --btn-bg: rgba(255, 255, 255, 0.08);
+      --btn-active: rgba(255, 255, 255, 0.22);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 380px;
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--card-border);
+      border-radius: 28px;
+      padding: 24px 20px 20px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 0 0 30px rgba(16, 185, 129, 0.15);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    .header {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--primary-gold);
+      letter-spacing: -0.3px;
+    }
+
+    .lang-btn {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: var(--text-main);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .lang-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .badge-purpose {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fbbf24;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      max-width: 90%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .user-info {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .title {
+      font-size: 18px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.4;
+      min-height: 34px;
+    }
+
+    /* PIN Dots */
+    .pin-dots {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      padding: 8px;
+    }
+
+    .dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.05);
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .dot.filled {
+      border-color: var(--primary-emerald);
+      background: var(--primary-emerald);
+      box-shadow: 0 0 12px var(--primary-emerald);
+      transform: scale(1.15);
+    }
+
+    .dot.confirm {
+      border-color: var(--primary-gold);
+      background: var(--primary-gold);
+      box-shadow: 0 0 12px var(--primary-gold);
+    }
+
+    .dot.error {
+      border-color: var(--danger);
+      background: var(--danger);
+      box-shadow: 0 0 12px var(--danger);
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-8px); }
+      40%, 80% { transform: translateX(8px); }
+    }
+
+    .shake {
+      animation: shake 0.4s ease-in-out;
+    }
+
+    /* Error Message */
+    .alert-box {
+      min-height: 22px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #fca5a5;
+      transition: opacity 0.2s;
+    }
+
+    /* Numpad Grid */
+    .numpad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .key {
+      background: var(--btn-bg);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-main);
+      border-radius: 18px;
+      height: 56px;
+      font-size: 22px;
+      font-weight: 700;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .key:active {
+      background: var(--btn-active);
+      transform: scale(0.94);
+    }
+
+    .key.action {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .key.action:active {
+      color: var(--text-main);
+    }
+
+    /* Success Screen */
+    .success-view {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px 10px;
+    }
+
+    .success-icon {
+      font-size: 54px;
+      margin-bottom: 16px;
+      animation: bounce 0.6s ease;
+    }
+
+    @keyframes bounce {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.2); }
+    }
+
+    .success-title {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--primary-emerald);
+      margin-bottom: 8px;
+    }
+
+    .success-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Loading state */
+    .loading-spinner {
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-top: 3px solid var(--primary-emerald);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 0.8s linear infinite;
+      margin: 20px auto;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+<main class="container" id="mainContainer">
+  <div class="header">
+    <div class="brand">
+      <span>🛡️</span> BayamSafe
+    </div>
+    <button class="lang-btn" id="langToggle">EN</button>
+  </div>
+
+  <div id="loadingView">
+    <div class="loading-spinner"></div>
+    <p class="user-info" id="loadingText">Chargement de la session sécurisée...</p>
+  </div>
+
+  <div id="pinView" style="display: none; width: 100%; flex-direction: column; align-items: center;">
+    <div id="purposeBadge" class="badge-purpose" style="display: none;"></div>
+    <div class="user-info" id="userGreeting"></div>
+    <h1 class="title" id="screenTitle"></h1>
+    <p class="subtitle" id="screenSubtitle"></p>
+
+    <div class="pin-dots" id="pinDots">
+      <div class="dot" id="d0"></div>
+      <div class="dot" id="d1"></div>
+      <div class="dot" id="d2"></div>
+      <div class="dot" id="d3"></div>
+    </div>
+
+    <div class="alert-box" id="alertBox"></div>
+
+    <div class="numpad">
+      <button class="key" data-digit="1">1</button>
+      <button class="key" data-digit="2">2</button>
+      <button class="key" data-digit="3">3</button>
+      <button class="key" data-digit="4">4</button>
+      <button class="key" data-digit="5">5</button>
+      <button class="key" data-digit="6">6</button>
+      <button class="key" data-digit="7">7</button>
+      <button class="key" data-digit="8">8</button>
+      <button class="key" data-digit="9">9</button>
+      <button class="key action" id="clearBtn">C</button>
+      <button class="key" data-digit="0">0</button>
+      <button class="key action" id="backspaceBtn">⌫</button>
+    </div>
+  </div>
+
+  <div id="successView" class="success-view">
+    <div class="success-icon">🛡️✨</div>
+    <h2 class="success-title" id="successTitle"></h2>
+    <p class="success-desc" id="successDesc"></p>
+  </div>
+</main>
+
+<script>
+(function() {
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+
+  function haptic(type) {
+    try {
+      if (tg?.HapticFeedback) {
+        if (type === 'light') tg.HapticFeedback.impactOccurred('light');
+        else if (type === 'medium') tg.HapticFeedback.impactOccurred('medium');
+        else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+        else if (type === 'error') tg.HapticFeedback.notificationOccurred('error');
+      }
+    } catch (e) {}
+  }
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const token = urlParams.get('t') || '';
+
+  let currentLang = 'fr';
+  let sessionData = null; // { mode: 'set'|'verify', purpose, user: { fullName, shopName } }
+  let inputPin = '';
+  let firstPin = ''; // for set mode confirm step
+  let isConfirmStep = false;
+  let isSubmitting = false;
+
+  const I18N = {
+    fr: {
+      langBtn: 'EN',
+      loading: 'Chargement de la session sécurisée...',
+      invalidSession: 'Session invalide ou expirée. Veuillez rouvrir le lien depuis Telegram.',
+      titles: {
+        setFirst: 'Définir votre code PIN',
+        setConfirm: 'Confirmez le code PIN',
+        verify: 'Code PIN de sécurité'
+      },
+      subtitles: {
+        setFirst: 'Créez un code à 4 chiffres pour sécuriser vos retraits et actions sensibles.',
+        setConfirm: 'Ressaisissez les 4 chiffres pour confirmer.',
+        verify: 'Entrez votre code secret à 4 chiffres pour autoriser cette opération.'
+      },
+      purposes: {
+        retrait: (amt) => `💸 Retrait de ${amt} FCFA`,
+        payout: (phone) => `📱 Nouveau numéro : ${phone}`,
+        manage: '🛡️ Gestion du compte'
+      },
+      errors: {
+        mismatch: 'Les codes ne correspondent pas. Recommencez.',
+        trivial: 'Code trop simple (évitez 1234 ou 0000).',
+        generic: 'Erreur lors de la validation. Réessayez.',
+        locked: 'Compte temporairement verrouillé suite à 5 erreurs.'
+      },
+      success: {
+        set: 'Code PIN configuré !',
+        setDesc: 'Votre compte est désormais sécurisé. Vous pouvez retourner sur Telegram.',
+        verify: 'Authentification réussie !',
+        verifyDesc: 'Opération autorisée avec succès. Vous pouvez retourner sur Telegram.'
+      }
+    },
+    en: {
+      langBtn: 'FR',
+      loading: 'Loading secure session...',
+      invalidSession: 'Invalid or expired session. Please reopen from Telegram.',
+      titles: {
+        setFirst: 'Set your security PIN',
+        setConfirm: 'Confirm your PIN',
+        verify: 'Security PIN'
+      },
+      subtitles: {
+        setFirst: 'Create a 4-digit PIN to protect withdrawals and sensitive operations.',
+        setConfirm: 'Re-enter the 4 digits to confirm.',
+        verify: 'Enter your 4-digit PIN to authorize this operation.'
+      },
+      purposes: {
+        retrait: (amt) => `💸 Withdrawal of ${amt} FCFA`,
+        payout: (phone) => `📱 New payout number: ${phone}`,
+        manage: '🛡️ Account security'
+      },
+      errors: {
+        mismatch: 'PINs do not match. Try again.',
+        trivial: 'Predictable PIN (avoid 1234 or 0000).',
+        generic: 'Error validating PIN. Try again.',
+        locked: 'Account temporarily locked after 5 failed attempts.'
+      },
+      success: {
+        set: 'PIN successfully set!',
+        setDesc: 'Your account is now secured. You can return to Telegram.',
+        verify: 'Authenticated successfully!',
+        verifyDesc: 'Action authorized. You can return to Telegram.'
+      }
+    }
+  };
+
+  const el = {
+    loading: document.getElementById('loadingView'),
+    loadingText: document.getElementById('loadingText'),
+    pinView: document.getElementById('pinView'),
+    successView: document.getElementById('successView'),
+    langToggle: document.getElementById('langToggle'),
+    purposeBadge: document.getElementById('purposeBadge'),
+    userGreeting: document.getElementById('userGreeting'),
+    screenTitle: document.getElementById('screenTitle'),
+    screenSubtitle: document.getElementById('screenSubtitle'),
+    pinDots: document.getElementById('pinDots'),
+    dots: [document.getElementById('d0'), document.getElementById('d1'), document.getElementById('d2'), document.getElementById('d3')],
+    alertBox: document.getElementById('alertBox'),
+    clearBtn: document.getElementById('clearBtn'),
+    backspaceBtn: document.getElementById('backspaceBtn'),
+    successTitle: document.getElementById('successTitle'),
+    successDesc: document.getElementById('successDesc')
+  };
+
+  function updateTexts() {
+    const t = I18N[currentLang];
+    el.langToggle.textContent = t.langBtn;
+
+    if (!sessionData) return;
+
+    if (sessionData.user?.fullName || sessionData.user?.shopName) {
+      el.userGreeting.textContent = sessionData.user.shopName || sessionData.user.fullName;
+    }
+
+    if (sessionData.purpose) {
+      el.purposeBadge.style.display = 'block';
+      if (sessionData.purpose.startsWith('retrait:')) {
+        const amt = sessionData.purpose.split(':')[1];
+        el.purposeBadge.textContent = t.purposes.retrait(Number(amt).toLocaleString());
+      } else if (sessionData.purpose.startsWith('payout:')) {
+        const phone = sessionData.purpose.split(':')[1];
+        el.purposeBadge.textContent = t.purposes.payout(phone);
+      } else {
+        el.purposeBadge.textContent = t.purposes.manage;
+      }
+    }
+
+    if (sessionData.mode === 'set') {
+      if (isConfirmStep) {
+        el.screenTitle.textContent = t.titles.setConfirm;
+        el.screenSubtitle.textContent = t.subtitles.setConfirm;
+      } else {
+        el.screenTitle.textContent = t.titles.setFirst;
+        el.screenSubtitle.textContent = t.subtitles.setFirst;
+      }
+    } else {
+      el.screenTitle.textContent = t.titles.verify;
+      el.screenSubtitle.textContent = t.subtitles.verify;
+    }
+  }
+
+  function updateDots() {
+    el.dots.forEach((dot, idx) => {
+      dot.className = 'dot';
+      if (idx < inputPin.length) {
+        dot.classList.add('filled');
+        if (isConfirmStep) dot.classList.add('confirm');
+      }
+    });
+  }
+
+  function triggerError(msg) {
+    haptic('error');
+    el.alertBox.textContent = msg;
+    el.dots.forEach(d => d.classList.add('error'));
+    el.pinDots.classList.remove('shake');
+    void el.pinDots.offsetWidth; // reflow
+    el.pinDots.classList.add('shake');
+
+    setTimeout(() => {
+      inputPin = '';
+      updateDots();
+      isSubmitting = false;
+    }, 450);
+  }
+
+  async function submitPin() {
+    if (isSubmitting) return;
+    isSubmitting = true;
+    const t = I18N[currentLang];
+
+    if (sessionData.mode === 'set') {
+      if (!isConfirmStep) {
+        // Trivial PIN check client-side
+        const trivial = ['0000','1111','2222','3333','4444','5555','6666','7777','8888','9999','1234','4321'];
+        if (trivial.includes(inputPin)) {
+          triggerError(t.errors.trivial);
+          return;
+        }
+        firstPin = inputPin;
+        inputPin = '';
+        isConfirmStep = true;
+        haptic('medium');
+        updateTexts();
+        updateDots();
+        isSubmitting = false;
+        return;
+      } else {
+        if (inputPin !== firstPin) {
+          triggerError(t.errors.mismatch);
+          isConfirmStep = false;
+          firstPin = '';
+          setTimeout(updateTexts, 400);
+          return;
+        }
+
+        // Call API /api/pin/set
+        try {
+          const res = await fetch('/api/pin/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, pin: inputPin })
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            triggerError(data.message || t.errors.generic);
+            return;
+          }
+          showSuccess(t.success.set, t.success.setDesc);
+        } catch (e) {
+          triggerError(t.errors.generic);
+        }
+      }
+    } else {
+      // Verify mode
+      try {
+        const res = await fetch('/api/pin/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, pin: inputPin })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          triggerError(data.message || t.errors.generic);
+          return;
+        }
+        showSuccess(t.success.verify, t.success.verifyDesc);
+      } catch (e) {
+        triggerError(t.errors.generic);
+      }
+    }
+  }
+
+  function showSuccess(title, desc) {
+    haptic('success');
+    el.pinView.style.display = 'none';
+    el.successTitle.textContent = title;
+    el.successDesc.textContent = desc;
+    el.successView.style.display = 'flex';
+
+    if (tg) {
+      setTimeout(() => {
+        try { tg.close(); } catch (e) {}
+      }, 1200);
+    }
+  }
+
+  function handleDigit(d) {
+    if (isSubmitting || inputPin.length >= 4) return;
+    haptic('light');
+    el.alertBox.textContent = '';
+    inputPin += d;
+    updateDots();
+
+    if (inputPin.length === 4) {
+      setTimeout(submitPin, 100);
+    }
+  }
+
+  function handleBackspace() {
+    if (isSubmitting || inputPin.length === 0) return;
+    haptic('light');
+    inputPin = inputPin.slice(0, -1);
+    updateDots();
+  }
+
+  function handleClear() {
+    if (isSubmitting) return;
+    haptic('medium');
+    inputPin = '';
+    updateDots();
+  }
+
+  // Event Listeners
+  document.querySelectorAll('.key[data-digit]').forEach(b => {
+    b.addEventListener('click', () => handleDigit(b.getAttribute('data-digit')));
+  });
+
+  el.backspaceBtn.addEventListener('click', handleBackspace);
+  el.clearBtn.addEventListener('click', handleClear);
+
+  el.langToggle.addEventListener('click', () => {
+    currentLang = currentLang === 'fr' ? 'en' : 'fr';
+    updateTexts();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key >= '0' && e.key <= '9') handleDigit(e.key);
+    else if (e.key === 'Backspace') handleBackspace();
+    else if (e.key === 'Escape') handleClear();
+  });
+
+  // Init session
+  async function init() {
+    if (!token) {
+      el.loadingText.textContent = I18N[currentLang].invalidSession;
+      return;
+    }
+    try {
+      const res = await fetch(`/api/pin/session?t=${encodeURIComponent(token)}`);
+      if (!res.ok) {
+        el.loadingText.textContent = I18N[currentLang].invalidSession;
+        return;
+      }
+      sessionData = await res.json();
+      el.loading.style.display = 'none';
+      el.pinView.style.display = 'flex';
+      updateTexts();
+      updateDots();
+    } catch (e) {
+      el.loadingText.textContent = I18N[currentLang].invalidSession;
+    }
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

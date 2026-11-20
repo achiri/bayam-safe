@@ -69,3 +69,42 @@ export const newRiderCode = () => `BSR-${randomChars(4)}`;
 
 /** e.g. BS-7KQ4-M2XD (~40 bits). Public: lets anyone see coarse status only. */
 export const newTrackingCode = () => `BS-${randomChars(4)}-${randomChars(4)}`;
+
+export interface PinTokenPayload {
+  userId: string;
+  telegramId: number;
+  action: 'set_pin' | 'verify_pin';
+  purpose?: string;
+  expiresAt: number;
+}
+
+const PIN_PREFIX = 'pin1';
+
+export function createPinToken(
+  appSecret: string,
+  payload: Omit<PinTokenPayload, 'expiresAt'>,
+  ttlMs = 15 * 60_000,
+  now = Date.now()
+): string {
+  const expiresAt = now + ttlMs;
+  const full: PinTokenPayload = { ...payload, expiresAt };
+  const body = Buffer.from(JSON.stringify(full)).toString('base64url');
+  const sig = crypto.createHmac('sha256', `pin-token:${appSecret}`).update(body).digest('base64url');
+  return `${PIN_PREFIX}.${body}.${sig}`;
+}
+
+export function verifyPinToken(appSecret: string, token: string, now = Date.now()): PinTokenPayload | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== PIN_PREFIX) return null;
+  const body = parts[1];
+  const sig = parts[2];
+  const expectedSig = crypto.createHmac('sha256', `pin-token:${appSecret}`).update(body).digest('base64url');
+  if (!safeEqual(sig, expectedSig)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as PinTokenPayload;
+    if (!(parsed.expiresAt > now)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}

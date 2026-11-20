@@ -7,6 +7,7 @@ import { createServer } from '../src/api/server.js';
 import { CampayGateway } from '../src/payments/campay.js';
 import { signHs256 } from '../src/payments/jwt.js';
 import { createAdminSession, hashPassword, verifyAdminSession, verifyPassword } from '../src/api/admin-auth.js';
+import { createPinToken } from '../src/domain/secrets.js';
 import { intraInput, makeApp, makeMerchant, makeRider, releaseCode, TestApp } from './helpers.js';
 
 const ADMIN = 'admin-key-admin-key-admin-key';
@@ -302,6 +303,76 @@ describe('HTTP API', () => {
       await assert.rejects(app.riders.withdrawFloat(rider.telegramId, 1_000), /échoué/);
       assert.equal((await app.store.getRider(rider.id))!.floatBalance, 5_000);
       app.sim.failingPayoutPhones.delete(rider.phone);
+    });
+
+    it('security PIN WebApp page and API endpoints', async () => {
+      const merchant = await makeMerchant(app);
+
+      // GET /pin serves HTML with customized CSP allowing telegram.org
+      const pinPage = await fetch(`${base}/pin`);
+      assert.equal(pinPage.status, 200);
+      assert.match(pinPage.headers.get('content-security-policy') ?? '', /telegram\.org/);
+      assert.match(await pinPage.text(), /BayamSafe · Code PIN Sécurisé/);
+
+      // GET /api/pin/session without token or invalid token
+      assert.equal((await call('GET', '/api/pin/session')).status, 401);
+      assert.equal((await call('GET', '/api/pin/session?t=invalid.token')).status, 401);
+
+      // Valid set_pin token
+      const setToken = createPinToken(app.config.APP_SECRET, {
+        userId: merchant.id,
+        telegramId: merchant.telegramId,
+        action: 'set_pin',
+        purpose: 'manage'
+      });
+      const sess = await call('GET', `/api/pin/session?t=${encodeURIComponent(setToken)}`);
+      assert.equal(sess.status, 200);
+      assert.deepEqual(sess.body, {
+        ok: true,
+        mode: 'set',
+        purpose: 'manage',
+        user: { fullName: merchant.fullName, shopName: merchant.shopName }
+      });
+
+      // POST /api/pin/set with invalid PIN
+      assert.equal((await call('POST', '/api/pin/set', { json: { token: setToken, pin: '123' } })).status, 400); // 3 digits
+      assert.equal((await call('POST', '/api/pin/set', { json: { token: setToken, pin: '1234' } })).status, 400); // trivial
+      assert.equal((await call('POST', '/api/pin/set', { json: { token: setToken, pin: '0000' } })).status, 400); // trivial
+
+      // POST /api/pin/set with valid PIN
+      const setOk = await call('POST', '/api/pin/set', { json: { token: setToken, pin: '8294' } });
+      assert.equal(setOk.status, 200);
+      assert.equal(setOk.body.ok, true);
+
+      const userAfter = (await app.store.getUser(merchant.id))!;
+      assert.ok(userAfter.pinHash);
+      assert.ok(userAfter.pinSetAt);
+      assert.equal(app.users.isPinAuthenticated(userAfter), true);
+
+      // Verify token
+      const verifyToken = createPinToken(app.config.APP_SECRET, {
+        userId: merchant.id,
+        telegramId: merchant.telegramId,
+        action: 'verify_pin',
+        purpose: 'retrait:5000'
+      });
+
+      // Wrong PIN
+      const wrong = await call('POST', '/api/pin/verify', { json: { token: verifyToken, pin: '9999' } });
+      assert.equal(wrong.status, 400);
+      assert.equal(wrong.body.ok, false);
+      assert.equal(wrong.body.remainingAttempts, 4);
+
+      // Correct PIN
+      const correct = await call('POST', '/api/pin/verify', { json: { token: verifyToken, pin: '8294' } });
+      assert.equal(correct.status, 200);
+      assert.equal(correct.body.ok, true);
+
+      // Admin user view redacts pinHash
+      const adminUsers = await call('GET', '/api/admin/users', { headers: auth });
+      const found = adminUsers.body.find((u: any) => u.id === merchant.id);
+      assert.ok(found);
+      assert.equal('pinHash' in found, false);
     });
   });
 

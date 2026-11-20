@@ -34,7 +34,9 @@ export type DomainEvent =
   | { type: 'rider.applied'; rider: Rider }
   | { type: 'rider.decided'; rider: Rider }
   | { type: 'topup.confirmed'; rider: Rider; topup: FloatTopup }
-  | { type: 'topup.attention'; rider: Rider; topup: FloatTopup };
+  | { type: 'topup.attention'; rider: Rider; topup: FloatTopup }
+  | { type: 'pin.set'; user: User }
+  | { type: 'pin.verified'; user: User; purpose?: string };
 
 type Handler = (e: DomainEvent) => void | Promise<void>;
 

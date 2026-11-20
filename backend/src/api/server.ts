@@ -1,8 +1,8 @@
 import express, { NextFunction, Request, RequestHandler, Response } from 'express';
 import path from 'node:path';
 import { App } from '../app.js';
-import { AppError, forbidden, invalid, unauthorized } from '../domain/errors.js';
-import { newId, safeEqual } from '../domain/secrets.js';
+import { AppError, forbidden, invalid, notFound, unauthorized } from '../domain/errors.js';
+import { newId, safeEqual, verifyPinToken } from '../domain/secrets.js';
 import { LedgerAccount, Order, OrderStatus, User } from '../domain/types.js';
 import { SimulatedGateway } from '../payments/simulated.js';
 import { rateLimit } from './rate-limit.js';
@@ -26,9 +26,9 @@ export function redactOrder(o: Order) {
   return { ...rest, payment };
 }
 
-/** Admin view of a user: drop the unfinished sign-up draft (raw answers) but keep documents' file ids. */
+/** Admin view of a user: drop the unfinished sign-up draft and sensitive PIN hash but keep documents' file ids. */
 export function redactUser(u: User) {
-  const { draft, ...rest } = u;
+  const { draft, pinHash, ...rest } = u;
   return { ...rest, signupInProgress: draft ? { kind: draft.kind, step: draft.step, startedAt: draft.startedAt } : undefined };
 }
 
@@ -95,6 +95,84 @@ export function createServer(appCtx: App, opts: ServerOptions = {}): express.Exp
     res.setHeader('X-Robots-Tag', 'noindex');
     res.sendFile(path.join(webDir, 'admin.html'));
   });
+
+  const pinCsp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://telegram.org",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'"
+  ].join('; ');
+
+  app.get('/pin', (_req, res) => {
+    res.removeHeader('X-Frame-Options');
+    res.setHeader('Content-Security-Policy', pinCsp);
+    res.sendFile(path.join(webDir, 'pin.html'));
+  });
+
+  // ---------------------------------------------------------------- security PIN WebApp
+  const pinLimiter = rateLimit({ windowMs: 60_000, max: 30 });
+
+  app.get(
+    '/api/pin/session',
+    pinLimiter,
+    h(async (req, res) => {
+      const token = String(req.query.t ?? '');
+      const payload = verifyPinToken(config.APP_SECRET, token);
+      if (!payload) throw unauthorized('Session de code PIN invalide ou expirée.');
+      const u = await store.getUser(payload.userId);
+      if (!u) throw notFound('Utilisateur introuvable.');
+      res.json({
+        ok: true,
+        mode: payload.action === 'set_pin' ? 'set' : 'verify',
+        purpose: payload.purpose,
+        user: { fullName: u.fullName, shopName: u.shopName }
+      });
+    })
+  );
+
+  app.post(
+    '/api/pin/set',
+    pinLimiter,
+    json,
+    h(async (req, res) => {
+      const token = String(req.body?.token ?? '');
+      const pin = String(req.body?.pin ?? '');
+      const payload = verifyPinToken(config.APP_SECRET, token);
+      if (!payload) throw unauthorized('Session de code PIN invalide ou expirée.');
+      const updated = await users.setPin(payload.userId, pin);
+      res.json({ ok: true, pinSetAt: updated.pinSetAt });
+    })
+  );
+
+  app.post(
+    '/api/pin/verify',
+    pinLimiter,
+    json,
+    h(async (req, res) => {
+      const token = String(req.body?.token ?? '');
+      const pin = String(req.body?.pin ?? '');
+      const payload = verifyPinToken(config.APP_SECRET, token);
+      if (!payload) throw unauthorized('Session de code PIN invalide ou expirée.');
+      const result = await users.verifyPin(payload.userId, pin, payload.purpose);
+      if (!result.success) {
+        return res.status(400).json({
+          ok: false,
+          message: result.lockedUntil
+            ? 'Code PIN bloqué pendant 15 minutes suite à 5 tentatives erronées.'
+            : `Code PIN incorrect. ${result.remainingAttempts} tentative(s) restante(s).`,
+          remainingAttempts: result.remainingAttempts,
+          lockedUntil: result.lockedUntil
+        });
+      }
+      res.json({ ok: true });
+    })
+  );
 
   app.get('/api/config', (_req, res) => {
     res.json({ botUsername: opts.publicConfig?.().botUsername ?? null });

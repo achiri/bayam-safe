@@ -4,6 +4,16 @@ import { normalizeCameroonPhone } from '../domain/phone.js';
 import { newId } from '../domain/secrets.js';
 import { conflict } from '../domain/errors.js';
 import { GeoPoint, Lang, OnboardingDraft, User } from '../domain/types.js';
+import { hashPassword, verifyPassword } from '../api/admin-auth.js';
+
+const TRIVIAL_PINS = new Set([
+  '0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999',
+  '1234', '2345', '3456', '4567', '5678', '6789', '4321', '9876'
+]);
+
+export function isTrivialPin(pin: string): boolean {
+  return TRIVIAL_PINS.has(pin);
+}
 
 export interface MerchantProfileInput {
   shopName?: string;
@@ -319,5 +329,91 @@ export class UserService {
   async listPendingPayoutPhones(): Promise<User[]> {
     const all = await this.store.listUsers(1000);
     return all.filter((u) => !!u.pendingPayoutPhone);
+  }
+
+  /**
+   * Sets or updates the user's 4-digit security PIN.
+   */
+  async setPin(userId: string, pin: string): Promise<User> {
+    const cleanPin = String(pin ?? '').trim();
+    if (!/^\d{4}$/.test(cleanPin)) {
+      throw invalid('Le code PIN doit comporter exactement 4 chiffres.');
+    }
+    if (isTrivialPin(cleanPin)) {
+      throw invalid('Veuillez choisir un code PIN moins prévisible (évitez 1234 ou 0000).');
+    }
+    const u = await this.store.getUser(userId);
+    if (!u) throw notFound('Utilisateur introuvable.');
+
+    const now = new Date().toISOString();
+    const pinHash = hashPassword(cleanPin);
+    const updated = await this.store.updateUser({
+      ...u,
+      pinHash,
+      pinSetAt: now,
+      pinFailedAttempts: 0,
+      pinLockedUntil: undefined,
+      pinAuthenticatedUntil: new Date(Date.now() + 15 * 60_000).toISOString(),
+      updatedAt: now
+    });
+    this.events.emit({ type: 'pin.set', user: updated });
+    return updated;
+  }
+
+  /**
+   * Verifies the user's PIN against their stored hash.
+   * Enforces 5-attempt rate limiting with a 15-minute lockout.
+   */
+  async verifyPin(
+    userId: string,
+    pin: string,
+    purpose?: string
+  ): Promise<{ success: boolean; remainingAttempts?: number; lockedUntil?: string }> {
+    const cleanPin = String(pin ?? '').trim();
+    const u = await this.store.getUser(userId);
+    if (!u) throw notFound('Utilisateur introuvable.');
+    if (!u.pinHash) throw invalid('Aucun code PIN configuré pour ce compte.');
+
+    const now = Date.now();
+    if (u.pinLockedUntil && new Date(u.pinLockedUntil).getTime() > now) {
+      throw forbidden(`Code PIN verrouillé suite à trop de tentatives. Réessayez après ${new Date(u.pinLockedUntil).toLocaleTimeString()}.`);
+    }
+
+    const ok = verifyPassword(cleanPin, u.pinHash);
+    const nowIso = new Date().toISOString();
+
+    if (!ok) {
+      const attempts = (u.pinFailedAttempts ?? 0) + 1;
+      let lockedUntil: string | undefined;
+      if (attempts >= 5) {
+        lockedUntil = new Date(now + 15 * 60_000).toISOString();
+      }
+      await this.store.updateUser({
+        ...u,
+        pinFailedAttempts: attempts,
+        pinLockedUntil: lockedUntil,
+        updatedAt: nowIso
+      });
+      return { success: false, remainingAttempts: Math.max(0, 5 - attempts), lockedUntil };
+    }
+
+    const updated = await this.store.updateUser({
+      ...u,
+      pinFailedAttempts: 0,
+      pinLockedUntil: undefined,
+      pinAuthenticatedUntil: new Date(now + 15 * 60_000).toISOString(),
+      updatedAt: nowIso
+    });
+    this.events.emit({ type: 'pin.verified', user: updated, purpose });
+    return { success: true };
+  }
+
+  /**
+   * Checks whether the user is currently within an authenticated PIN session (valid 15 minutes).
+   */
+  isPinAuthenticated(user: User): boolean {
+    if (!user.pinHash) return false;
+    if (!user.pinAuthenticatedUntil) return false;
+    return new Date(user.pinAuthenticatedUntil).getTime() > Date.now();
   }
 }

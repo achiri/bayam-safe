@@ -5,6 +5,7 @@ import { AppError } from '../domain/errors.js';
 import { OutsideCameroonError, assertGeoPoint, googleMapsRoute, parseCoordinates } from '../domain/geo.js';
 import { SELLER_DEBT_COD_LIMIT } from '../domain/money.js';
 import { isValidContactPhone, normalizeContactPhone } from '../domain/phone.js';
+import { createPinToken } from '../domain/secrets.js';
 import { Lang, Order, OrderType, PaymentMode, Rider, User, GeoPoint } from '../domain/types.js';
 import { DomainEvent } from '../services/events.js';
 import { esc, t } from '../i18n/locales.js';
@@ -114,6 +115,7 @@ const COMMANDS: Record<Lang, Array<{ command: string; description: string }>> = 
     { command: 'menu', description: 'Menu principal' },
     { command: 'orders', description: 'Mes commandes' },
     { command: 'profile', description: 'Mon profil vendeur' },
+    { command: 'pin', description: 'Code PIN de sécurité' },
     { command: 'jobs', description: 'Mes courses (livreurs)' },
     { command: 'earnings', description: 'Mes gains (livreurs)' },
     { command: 'retrait', description: 'Retirer ma caution libre' },
@@ -126,6 +128,7 @@ const COMMANDS: Record<Lang, Array<{ command: string; description: string }>> = 
     { command: 'menu', description: 'Main menu' },
     { command: 'orders', description: 'My orders' },
     { command: 'profile', description: 'My seller profile' },
+    { command: 'pin', description: 'Security PIN' },
     { command: 'jobs', description: 'My jobs (riders)' },
     { command: 'earnings', description: 'My earnings (riders)' },
     { command: 'retrait', description: 'Withdraw free float' },
@@ -371,6 +374,23 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     await listOrders(ctx);
   }));
 
+  const makePinUrl = (user: User, action: 'set_pin' | 'verify_pin', purpose?: string) => {
+    const token = createPinToken(config.APP_SECRET ?? 'default-secret-test-1234567890123456', {
+      userId: user.id,
+      telegramId: user.telegramId,
+      action,
+      purpose
+    });
+    return `${config.PUBLIC_URL}/pin?t=${encodeURIComponent(token)}`;
+  };
+
+  const attachPinButton = (kb: InlineKeyboard, text: string, url: string) => {
+    if (url.startsWith('https://')) {
+      return kb.webApp(text, url);
+    }
+    return kb.url(text, url);
+  };
+
   const showProfile = async (ctx: BotContext) => {
     const u = await requireUser(ctx);
     if (!u) return;
@@ -383,7 +403,8 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
       .text(z.btnEditAddress, 'shop:edit:address').row()
       .text(z.btnEditShopName, 'shop:edit:name')
       .text(z.btnEditCity, 'shop:edit:city').row()
-      .text(z.btnEditShopPhoto, 'shop:edit:photo').row()
+      .text(z.btnEditShopPhoto, 'shop:edit:photo')
+      .text(u.pinHash ? '🔐 Code PIN' : '🔐 Définir PIN', 'shop:pin').row()
       .text(z.btnBackToMenu, 'menu:home');
 
     const statusText = ctx.s.profileStatus(u.kycStatus, u.kycNote);
@@ -402,6 +423,28 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     );
   };
   bot.command(['profile', 'kyc', 'shop', 'boutique', 'magasin'], guard(showProfile));
+
+  const pinCmd = async (ctx: BotContext) => {
+    const u = await requireUser(ctx);
+    if (!u) return;
+    const z = x(ctx.lang);
+    const kb = new InlineKeyboard();
+    if (!u.pinHash) {
+      const url = makePinUrl(u, 'set_pin', 'manage');
+      attachPinButton(kb, z.btnSetPin, url);
+      return html(ctx, z.pinIntroNoPin, { reply_markup: kb });
+    }
+    const changeUrl = makePinUrl(u, 'set_pin', 'manage');
+    const verifyUrl = makePinUrl(u, 'verify_pin', 'manage');
+    attachPinButton(kb, z.btnChangePin, changeUrl).row();
+    attachPinButton(kb, z.btnVerifyPin, verifyUrl);
+    return html(ctx, z.pinIntroHasPin(u.pinSetAt ? new Date(u.pinSetAt).toLocaleDateString() : 'Actif'), { reply_markup: kb });
+  };
+  bot.command(['pin', 'codepin', 'security'], guard(pinCmd));
+  bot.callbackQuery('shop:pin', guard(async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await pinCmd(ctx);
+  }));
   bot.callbackQuery('menu:kyc', guard(async (ctx) => {
     await ctx.answerCallbackQuery();
     await showProfile(ctx);
@@ -839,6 +882,19 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
   bot.command('retrait', guard(async (ctx) => {
     const amount = parseAmount(String(ctx.match ?? ''));
     if (!amount) return html(ctx, x(ctx.lang).withdrawUsage);
+    const user = await users.require(ctx.from!.id);
+    if (!user.pinHash) {
+      const url = makePinUrl(user, 'set_pin', `retrait:${amount}`);
+      const kb = new InlineKeyboard();
+      attachPinButton(kb, x(ctx.lang).btnSetPin, url);
+      return html(ctx, `${x(ctx.lang).pinMustSetFirst}\n\n${x(ctx.lang).pinRequiredForWithdraw(amount)}`, { reply_markup: kb });
+    }
+    if (!users.isPinAuthenticated(user)) {
+      const url = makePinUrl(user, 'verify_pin', `retrait:${amount}`);
+      const kb = new InlineKeyboard();
+      attachPinButton(kb, x(ctx.lang).btnEnterPin, url);
+      return html(ctx, x(ctx.lang).pinRequiredForWithdraw(amount), { reply_markup: kb });
+    }
     const res = await riders.withdrawFloat(ctx.from!.id, amount);
     await html(ctx, res.message ? esc(res.message) : x(ctx.lang).withdrawSent(amount));
   }));
@@ -847,6 +903,19 @@ export function createBot(app: App, token: string, botConfig?: BotConfig<BotCont
     if (!(await requireUser(ctx))) return;
     const phone = String(ctx.match ?? '').trim();
     if (!phone) return html(ctx, x(ctx.lang).payoutUsage);
+    const user = await users.require(ctx.from!.id);
+    if (!user.pinHash) {
+      const url = makePinUrl(user, 'set_pin', `payout:${phone}`);
+      const kb = new InlineKeyboard();
+      attachPinButton(kb, x(ctx.lang).btnSetPin, url);
+      return html(ctx, `${x(ctx.lang).pinMustSetFirst}\n\n${x(ctx.lang).pinRequiredForPayoutPhone(phone)}`, { reply_markup: kb });
+    }
+    if (!users.isPinAuthenticated(user)) {
+      const url = makePinUrl(user, 'verify_pin', `payout:${phone}`);
+      const kb = new InlineKeyboard();
+      attachPinButton(kb, x(ctx.lang).btnEnterPin, url);
+      return html(ctx, x(ctx.lang).pinRequiredForPayoutPhone(phone), { reply_markup: kb });
+    }
     await users.requestPayoutPhone(ctx.from!.id, phone);
     await html(ctx, x(ctx.lang).payoutRequested);
   }));
@@ -1698,6 +1767,33 @@ Retrait <code>${e.topup.id}</code>`
       case 'topup.confirmed': {
         const u = await store.getUser(e.rider.userId);
         await send(e.rider.telegramId, t(u?.lang ?? 'fr').topupConfirmed(e.topup.amount, e.rider.floatBalance));
+        return;
+      }
+      case 'pin.set': {
+        await send(e.user.telegramId, x(e.user.lang).pinSetSuccess);
+        return;
+      }
+      case 'pin.verified': {
+        const u = e.user;
+        if (e.purpose && e.purpose.startsWith('retrait:')) {
+          const amt = Number(e.purpose.split(':')[1]);
+          try {
+            const res = await riders.withdrawFloat(u.telegramId, amt);
+            await send(u.telegramId, res.message ? esc(res.message) : x(u.lang).withdrawSent(amt));
+          } catch (err: any) {
+            await send(u.telegramId, `❌ ${esc(err.message)}`);
+          }
+        } else if (e.purpose && e.purpose.startsWith('payout:')) {
+          const phone = e.purpose.split(':')[1];
+          try {
+            await users.requestPayoutPhone(u.telegramId, phone);
+            await send(u.telegramId, x(u.lang).payoutRequested);
+          } catch (err: any) {
+            await send(u.telegramId, `❌ ${esc(err.message)}`);
+          }
+        } else {
+          await send(u.telegramId, x(u.lang).pinVerifiedSuccess);
+        }
         return;
       }
     }

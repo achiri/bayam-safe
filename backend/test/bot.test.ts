@@ -362,6 +362,7 @@ describe('telegram bot', () => {
   it('/payout asks the admin, /earnings shows FCFA amounts', async () => {
     const h = harness();
     const merchant = await makeMerchant(h.app, { kycStatus: 'VERIFIED' });
+    await h.app.users.setPin(merchant.id, '4829');
     await h.text(merchant.telegramId, '/payout');
     assert.match(h.lastText(), /Utilisation/);
     await h.text(merchant.telegramId, '/payout 699001122');
@@ -470,5 +471,95 @@ describe('telegram bot', () => {
     await h.text(M, '699112233');
     await h.press(M, 'ord:pickup_shop');
     assert.match(h.lastText(), /Comment le client paie-t-il/);
+  });
+
+  it('merchants and riders set security PIN and authenticate sensitive operations', async () => {
+    const h = harness();
+    const M = 901;
+    await signUpMerchant(h, M);
+    const merchant = await h.app.users.require(M);
+
+    // 1. Initial state: merchant has no PIN
+    await h.text(M, '/pin');
+    assert.match(h.lastText(), /Code PIN de sécurité BayamSafe/);
+    const lastSent = h.sent.at(-1)?.payload;
+    assert.ok(lastSent.reply_markup?.inline_keyboard?.[0]?.[0]?.text.includes('Définir'));
+    const url = lastSent.reply_markup.inline_keyboard[0][0].url || lastSent.reply_markup.inline_keyboard[0][0].web_app?.url;
+    assert.match(url, /\/pin\?t=pin1\./);
+
+    // Profile card also offers PIN button
+    await h.text(M, '/profile');
+    assert.match(h.lastText(), /Chez Awa/);
+    const profileKb = h.sent.at(-1)?.payload.reply_markup?.inline_keyboard;
+    assert.ok(profileKb?.some((row: any[]) => row.some((btn) => btn.callback_data === 'shop:pin')));
+
+    // 2. Sensitive action /payout before PIN is set requires setting PIN first
+    await h.text(M, '/payout 677112233');
+    assert.match(h.lastText(), /Code PIN requis/);
+
+    // 3. Set PIN
+    await h.app.users.setPin(merchant.id, '4826');
+    await tick();
+    assert.match(h.lastText(), /Code PIN configuré avec succès/);
+
+    // 4. Now that PIN is configured, /pin shows active status and buttons to change or verify
+    await h.text(M, '/pin');
+    assert.match(h.lastText(), /Code PIN de sécurité BayamSafe : Actif/);
+    const pinActiveKb = h.sent.at(-1)?.payload.reply_markup?.inline_keyboard;
+    assert.ok(pinActiveKb[0][0].text.includes('Modifier'));
+    assert.ok(pinActiveKb[1][0].text.includes('Vérifier'));
+
+    // 5. Rider float withdrawal with PIN requirement
+    const R_TG = 902;
+    const riderUser = await makeMerchant(h.app, { telegramId: R_TG, phone: '+237699887766' });
+    const rider = await makeRider(h.app, { userId: riderUser.id, telegramId: R_TG, floatBalance: 15_000, floatReserved: 0 });
+
+    // Rider has no PIN yet -> /retrait 5000 asks to set PIN
+    await h.text(R_TG, '/retrait 5000');
+    assert.match(h.lastText(), /Code PIN requis/);
+
+    // Set rider PIN
+    await h.app.users.setPin(riderUser.id, '9182');
+    await tick();
+    assert.match(h.lastText(), /Code PIN configuré avec succès/);
+
+    // While freshly authenticated (within 15 min), withdrawal processes directly
+    await h.text(R_TG, '/retrait 5000');
+    assert.match(h.lastText(), /Retrait de 5[\s\u202f]?000 FCFA demandé/);
+    let rObj = (await h.app.store.getRider(rider.id))!;
+    assert.equal(rObj.floatBalance, 10_000);
+
+    // 6. Expire PIN session
+    const currentRiderUser = await h.app.users.require(R_TG);
+    await h.app.store.updateUser({ ...currentRiderUser, pinAuthenticatedUntil: new Date(Date.now() - 1000).toISOString() });
+    await h.text(R_TG, '/retrait 3000');
+    assert.match(h.lastText(), /Confirmation requise : Retrait de 3[\s\u202f]?000 FCFA/);
+
+    // 7. Test wrong PIN attempts & lockout
+    const wrong1 = await h.app.users.verifyPin(riderUser.id, '0001');
+    assert.equal(wrong1.success, false);
+    assert.equal(wrong1.remainingAttempts, 4);
+
+    await h.app.users.verifyPin(riderUser.id, '0002');
+    await h.app.users.verifyPin(riderUser.id, '0003');
+    await h.app.users.verifyPin(riderUser.id, '0004');
+    const wrong5 = await h.app.users.verifyPin(riderUser.id, '0005');
+    assert.equal(wrong5.success, false);
+    assert.equal(wrong5.remainingAttempts, 0);
+    assert.ok(wrong5.lockedUntil);
+
+    // Locked user gets forbidden on verify
+    await assert.rejects(h.app.users.verifyPin(riderUser.id, '9182'), /verrouillé/);
+
+    // Reset lock for test
+    const lockedUser = await h.app.users.require(R_TG);
+    await h.app.store.updateUser({ ...lockedUser, pinFailedAttempts: 0, pinLockedUntil: undefined });
+
+    // 8. Automatic execution of withdrawal when WebApp completes verify with purpose
+    await h.app.users.verifyPin(riderUser.id, '9182', 'retrait:2000');
+    await tick();
+    assert.match(h.lastText(), /Retrait de 2[\s\u202f]?000 FCFA demandé/);
+    rObj = (await h.app.store.getRider(rider.id))!;
+    assert.equal(rObj.floatBalance, 8_000);
   });
 });

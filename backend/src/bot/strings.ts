@@ -140,7 +140,32 @@ const fr = {
   shopCityUpdated: '✅ <b>Ville de la boutique mise à jour !</b>',
   shopPhotoUpdated: '✅ <b>Photo de la boutique enregistrée !</b>',
   shopNameTooShort: 'Le nom de la boutique est trop court (min 2 caractères).',
-  invalidCoordinates: 'Coordonnées non reconnues. Envoyez votre position via Telegram ou collez <code>4.0511, 9.7085</code>.'
+  invalidCoordinates: 'Coordonnées non reconnues. Envoyez votre position via Telegram ou collez <code>4.0511, 9.7085</code>.',
+
+  btnSetPin: '🔐 Définir mon code PIN',
+  btnEnterPin: '🔐 Saisir mon code PIN',
+  btnChangePin: '🔄 Modifier mon code PIN',
+  btnVerifyPin: '🔐 Vérifier mon code PIN',
+  pinIntroNoPin:
+    '🛡️ <b>Code PIN de sécurité BayamSafe</b>\n\n' +
+    'Protégez votre compte, vos gains et vos retraits en définissant un code PIN secret à 4 chiffres.\n\n' +
+    'Ce code vous sera demandé pour autoriser les retraits de caution et les modifications sensibles.',
+  pinIntroHasPin: (date: string) =>
+    '🛡️ <b>Code PIN de sécurité BayamSafe : Actif</b>\n\n' +
+    'Votre code PIN est configuré et protège vos retraits et coordonnées financières.\n\n' +
+    `• Configuré le : <code>${esc(date)}</code>\n• Statut : 🔒 <b>Protégé</b>`,
+  pinRequiredForWithdraw: (amount: number) =>
+    `🔒 <b>Confirmation requise : Retrait de ${fr.money(amount)}</b>\n\n` +
+    'Veuillez saisir votre code PIN à 4 chiffres sur la page sécurisée pour autoriser ce retrait vers votre compte Mobile Money.',
+  pinRequiredForPayoutPhone: (phone: string) =>
+    `🔒 <b>Confirmation requise : Changement de numéro</b>\n\n` +
+    `Nouveau numéro : <code>${esc(phone)}</code>\n` +
+    'Veuillez saisir votre code PIN à 4 chiffres sur la page sécurisée pour confirmer cette demande.',
+  pinMustSetFirst:
+    '🔒 <b>Code PIN requis</b>\n\n' +
+    'Pour votre sécurité, vous devez d’abord définir un code PIN à 4 chiffres avant de pouvoir effectuer cette opération.',
+  pinSetSuccess: '🔐 <b>Code PIN configuré avec succès !</b>\nVotre compte et vos retraits sont désormais protégés.',
+  pinVerifiedSuccess: '✅ <b>Authentification réussie !</b>\nVotre session est déverrouillée.'
 };
 
 type Strings = typeof fr;
@@ -273,7 +298,32 @@ const en: Strings = {
   shopCityUpdated: '✅ <b>Shop city updated!</b>',
   shopPhotoUpdated: '✅ <b>Shop photo saved!</b>',
   shopNameTooShort: 'Shop name too short (min 2 characters).',
-  invalidCoordinates: 'Coordinates not recognised. Send your location via Telegram or paste <code>4.0511, 9.7085</code>.'
+  invalidCoordinates: 'Coordinates not recognised. Send your location via Telegram or paste <code>4.0511, 9.7085</code>.',
+
+  btnSetPin: '🔐 Set security PIN',
+  btnEnterPin: '🔐 Enter security PIN',
+  btnChangePin: '🔄 Change security PIN',
+  btnVerifyPin: '🔐 Verify security PIN',
+  pinIntroNoPin:
+    '🛡️ <b>BayamSafe Security PIN</b>\n\n' +
+    'Protect your account, earnings, and withdrawals by setting a 4-digit secret PIN.\n\n' +
+    'This PIN will be required to authorize float withdrawals and sensitive changes.',
+  pinIntroHasPin: (date: string) =>
+    '🛡️ <b>BayamSafe Security PIN: Active</b>\n\n' +
+    'Your security PIN is configured and protects your withdrawals and financial details.\n\n' +
+    `• Configured on: <code>${esc(date)}</code>\n• Status: 🔒 <b>Protected</b>`,
+  pinRequiredForWithdraw: (amount: number) =>
+    `🔒 <b>Confirmation required: Withdrawal of ${en.money(amount)}</b>\n\n` +
+    'Please enter your 4-digit PIN on the secure page to authorize this withdrawal to your Mobile Money account.',
+  pinRequiredForPayoutPhone: (phone: string) =>
+    `🔒 <b>Confirmation required: Change payout number</b>\n\n` +
+    `New number: <code>${esc(phone)}</code>\n` +
+    'Please enter your 4-digit PIN on the secure page to confirm this request.',
+  pinMustSetFirst:
+    '🔒 <b>Security PIN required</b>\n\n' +
+    'For security reasons, you must first set up a 4-digit PIN before performing this operation.',
+  pinSetSuccess: '🔐 <b>Security PIN successfully configured!</b>\nYour account and withdrawals are now secured.',
+  pinVerifiedSuccess: '✅ <b>Authenticated successfully!</b>\nYour session is unlocked.'
 };
 
 export function x(lang: Lang = 'fr'): Strings {

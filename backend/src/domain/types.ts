@@ -71,6 +71,16 @@ export interface User {
   owedToPlatform?: number;
   /** Times a rider reported the seller absent at pickup. */
   absentAtPickup?: number;
+  /** Scrypt hash of the 4-digit security PIN */
+  pinHash?: string;
+  /** Number of consecutive failed PIN attempts */
+  pinFailedAttempts?: number;
+  /** ISO timestamp when the PIN lockout expires (after 5 failed attempts) */
+  pinLockedUntil?: string;
+  /** ISO timestamp when the PIN was configured */
+  pinSetAt?: string;
+  /** ISO timestamp until which the user is temporarily authenticated for sensitive actions */
+  pinAuthenticatedUntil?: string;
   createdAt: string;
   updatedAt: string;
 }
